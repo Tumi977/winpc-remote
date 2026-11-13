@@ -1,0 +1,7 @@
+{
+  "server": "your.server.example.com",
+  "user": "winpc-tunnel",
+  "key_file": "C:\\Users\\YOU\\.ssh\\winpc_tunnel_ed25519",
+  "ssh_port": 22,
+  "port": 8765
+}

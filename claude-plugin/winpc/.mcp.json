@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "winpc": {
+      "type": "http",
+      "url": "${WINPC_URL:-http://127.0.0.1:8765/mcp}",
+      "headers": { "Authorization": "Bearer ${WINPC_TOKEN}" }
+    }
+  }
+}

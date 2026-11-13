@@ -1,0 +1,4 @@
+-r windows-agent/requirements.txt
+pytest
+pytest-asyncio
+httpx
