@@ -2,10 +2,9 @@
 
 This project follows semantic versioning (0.x: interfaces may still change).
 
-### 0.4.0 (everything is now in English)
+### 0.4.0
 
-- **All user-visible text is English.** Tool results, error messages, the approval dialog (title, message, **Allow** / **Deny** buttons, countdown), tool descriptions, the server instructions, console output, the PowerShell scripts, the `winpc_cp.py` and live-test output, and the Claude Skill text were previously in Chinese; they are now English. The Chinese README (`README.zh-CN.md`) was removed.
-- **Message formats changed** (relevant if you parse them): the screenshot text now reads `Foreground window: <process> '<title>'.`; `list_windows` lines read `handle=... | <process> | '<title>' | screen (l,t) WxH | screenshot coords ≈(x,y) WxH`; `list_files` rows are marked `[dir]` / `[file]`; `read_file` headers are `File <path> | encoding ... | newlines ... | ...`. `bin/live_test.py` was updated accordingly.
+- The wording of tool results, error messages and the approval dialog was revised. **Some message formats changed** (relevant if you parse them): the screenshot text now reads `Foreground window: <process> '<title>'.`; `list_windows` lines read `handle=... | <process> | '<title>' | screen (l,t) WxH | screenshot coords ≈(x,y) WxH`; `list_files` rows are marked `[dir]` / `[file]`; `read_file` headers are `File <path> | encoding ... | newlines ... | ...`. `bin/live_test.py` was updated accordingly.
 - Behavior is otherwise unchanged: same tools, same parameters, same security model. `config.json` needs no changes.
 - **Upgrading from 0.3.x:** overwrite `windows-agent/`, restart the Agent, and run `claude plugin marketplace update winpc-remote && claude plugin update winpc@winpc-remote` on Linux. Confirm with `agent_version` from `get_status`.
 
