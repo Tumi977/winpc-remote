@@ -11,7 +11,7 @@
 安装：
 
 ```bash
-claude plugin marketplace add YOUR_GITHUB_USER/winpc-remote
+claude plugin marketplace add Tumi977/winpc-remote
 claude plugin install winpc@winpc-remote
 ```
 

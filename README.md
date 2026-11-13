@@ -79,7 +79,7 @@ Claude Desktop 自带的 computer use 没有对外接口，远程 Claude Code �
 ### 3.1 获取代码并启动
 
 ```powershell
-git clone https://github.com/YOUR_GITHUB_USER/winpc-remote.git "$HOME\winpc-remote"
+git clone https://github.com/Tumi977/winpc-remote.git "$HOME\winpc-remote"
 cd "$HOME\winpc-remote\windows-agent"
 powershell -ExecutionPolicy Bypass -File .\start-agent.ps1
 ```
@@ -283,7 +283,7 @@ chmod 600 ~/.claude/settings.json
 ### 5.2 安装插件（推荐）
 
 ```bash
-claude plugin marketplace add YOUR_GITHUB_USER/winpc-remote     # 或本地路径：/path/to/winpc-remote
+claude plugin marketplace add Tumi977/winpc-remote     # 或本地路径：/path/to/winpc-remote
 claude plugin install winpc@winpc-remote
 ```
 
@@ -428,7 +428,7 @@ python3 $CP put --resume ./big.iso 'C:\Users\YOU\Desktop\'         # 传到一�
 ### 自动化测试（Linux / Windows 均可，无需真实桌面）
 
 ```bash
-git clone https://github.com/YOUR_GITHUB_USER/winpc-remote.git && cd winpc-remote
+git clone https://github.com/Tumi977/winpc-remote.git && cd winpc-remote
 python3 -m venv .venv && . .venv/bin/activate     # Ubuntu/Debian 若报 ensurepip 错误：sudo apt install python3-venv
 pip install -r requirements-dev.txt
 NO_PROXY=127.0.0.1,localhost pytest -q
