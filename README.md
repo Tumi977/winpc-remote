@@ -7,6 +7,8 @@ Let **Claude Code running on a remote Linux server** operate **your local Window
 
 Claude Desktop's built-in computer use has no external interface, so a remote Claude Code cannot borrow it. This project provides the missing piece: a Windows-side executor plus a secure channel.
 
+**Why this one?** Nothing listens on the network (SSH reverse tunnel, loopback only), a human approves on the PC, keys cannot land in the wrong window, there is no shell tool, and file transfer is chunked, verified and resumable. See [Why WinPC Remote? Comparison with similar tools](#why-winpc-remote-comparison-with-similar-tools).
+
 > **This is a third-party community project and is not affiliated with Anthropic.**
 
 > ## ⚠️ Read this first
@@ -19,6 +21,7 @@ Claude Desktop's built-in computer use has no external interface, so a remote Cl
 
 ## Table of contents
 
+0. [Why WinPC Remote? Comparison with similar tools](#why-winpc-remote-comparison-with-similar-tools)
 1. [How it works](#1-how-it-works)
 2. [Quick start (5 steps)](#2-quick-start-5-steps)
 3. [Windows setup](#3-windows-setup)
@@ -30,6 +33,53 @@ Claude Desktop's built-in computer use has no external interface, so a remote Cl
 9. [Troubleshooting](#9-troubleshooting)
 10. [Upgrading, rotating the token, uninstalling](#10-upgrading-rotating-the-token-uninstalling)
 11. [Project layout, changes and license](#11-project-layout-changes-and-license)
+
+---
+
+## Why WinPC Remote? Comparison with similar tools
+
+Several open-source MCP servers can already drive a Windows desktop. Most are built to run **locally** (an assistant on the same PC) or to expose a general-purpose control API on the Windows machine. WinPC Remote is built for one specific job: **a remote Claude Code, running on a server you reach over SSH, operating your own everyday PC safely.** That choice drives every item below.
+
+### What is different here
+
+| | WinPC Remote |
+|---|---|
+| **Nothing listens on the network** | The agent binds `127.0.0.1` only and Windows *initiates* an SSH reverse tunnel to the server. No inbound firewall rule, no public port, no TLS certificate to manage, works behind NAT. A Bearer token plus Host/Origin checks still protect the loopback port from other local processes and browsers. |
+| **A human approves on the PC** | In the default `prompt` mode the first operation on an app, and the first write in a directory, shows a confirmation dialog on the Windows machine (own subprocess, top of the screen, never steals focus, times out as "deny"). Approval is per app / per directory per session, not a static on/off switch. |
+| **Keys cannot land in the wrong window** | `type_text` / `press_key` accept `expect_app` and `expect_handle`; when the foreground window is not the one the model meant, **nothing is sent** (checked before any prompt, and again after an approval dialog steals focus). This exists because keys really did land in the wrong window three times during live testing. |
+| **No shell tool, no registry or service control** | The tool surface is screen + keyboard/mouse + files + transfer. Approving an app is still not a sandbox (see [6.2](#62-known-risks-please-read-each)), but the server does not hand the model an arbitrary command-execution primitive by itself. |
+| **File access with guard rails** | Private keys are detected by **content**, not just by name; sensitive paths and file names (browser data, password vaults, `.env`, PowerShell history, the agent's own directory and config) are blocked in every approval mode; executable extensions (`.exe .bat .ps1 .reg ...`) cannot be written even in `bypass`; UNC paths, alternate data streams, trailing dots/spaces, symlinks and junctions are rejected or resolved before the policy check. Writes are atomic and overwrites are backed up first. |
+| **Reliable, verified file transfer** | `get_file` / `put_file` + `winpc_cp.py`: binary, chunked (at most 2 MiB per call), sha256 and size verified, atomic replace, **resumable** after a dropped connection, and the content never passes through the model context. Text tools (`read_file` / `edit_file`) detect UTF-8 / UTF-16 / GBK and keep the newline style. |
+| **Emergency stop and audit log** | Slam the mouse into the top-left corner and every input tool is refused until the agent is restarted *on the PC* (it cannot be undone remotely). An audit log records what was done, but never binary payloads or tokens. |
+| **Made for Claude Code** | Ships as a Claude Code plugin (marketplace + `.mcp.json` + a Skill that teaches the safe workflow: look first, one action at a time, `expect_app` on every key press, paste long text, ask before irreversible actions). |
+| **Tested against real incidents** | 175 automated tests (unit + real-HTTP end to end) with regression tests for each defect found on a real machine: dialog-timeout crash, `ECONNRESET` after idle, keys sent to another window, dropped characters in WinUI apps. |
+
+### Side by side
+
+Compared with [WinRemote MCP](https://github.com/dddabtc/winremote-mcp) (`dddabtc/winremote-mcp`, v0.4.24, the closest project: a Python MCP server you run on the Windows machine and reach over HTTP). "Not documented" means the project's README / SECURITY.md did not describe it when read on 2026-11-13; it may exist undocumented.
+
+| | **WinPC Remote** | **WinRemote MCP** |
+|---|---|---|
+| Typical deployment | Remote Claude Code over an SSH reverse tunnel (Tailscale also possible) | Server on the Windows machine, `stdio` locally or streamable HTTP on `:8090` (default bind `127.0.0.1`) |
+| Network exposure | Loopback only; Windows dials out | Remote use means the HTTP port is reachable; Bearer key, optional IP allowlist (CIDR), optional TLS and OAuth 2.0; refuses non-loopback binds without a key |
+| Human confirmation on the PC | Per app and per directory (`prompt`), plus `allowlist` / `all` modes | Not documented; instead static risk tiers (read-only and interactive on, "Tier 3" off unless enabled with `--enable-tier3` / `--enable-all`) |
+| Wrong-window guard for keyboard input | `expect_app` / `expect_handle` | Not documented |
+| Emergency stop | Mouse to top-left corner, resumed only on the PC | Not documented (task cancellation exists) |
+| Audit log | Built in, no payloads/tokens | Not documented as a feature (a checklist item in SECURITY.md) |
+| Sensitive-path / private-key blocking | Content-based key detection, path and name block-lists, executable-extension block, agent directory protected | Not documented (`FileRead` is described as "Read any file") |
+| Shell / registry / services | Deliberately not provided | `Shell` (PowerShell), `RegRead` / `RegWrite`, service and scheduled-task tools; gated behind Tier 3 |
+| File transfer | Chunked, sha256-verified, atomic, resumable | `FileDownload` / `FileUpload` as base64 in a single call; chunking, checksums and size limits not documented |
+| Install | Clone + PowerShell script on Windows, tunnel, plugin on Linux | `pip install winremote-mcp` |
+
+### Where the others are ahead (honestly)
+
+- **WinRemote MCP has a much wider tool surface**: 42 tools are listed in its README, including OCR, annotated UI snapshots, screen recording, clipboard, process / service / registry / scheduled-task management, shell execution and network probes, plus OAuth 2.0, TLS, an IP allowlist, and a one-command install with a Windows scheduled task for auto-start. If you want a general Windows automation server and you manage its exposure yourself, it covers more ground.
+- **Windows-MCP** ([CursorTouch/Windows-MCP](https://github.com/CursorTouch/Windows-MCP)) is a popular, local-first MCP server (UI Automation + PyAutoGUI, `uvx windows-mcp`) aimed at assistants running on the same PC, such as Claude Desktop. From the public listings I read, I did not find a remote-Claude-Code setup or a per-action approval workflow, and one third-party review notes it has no built-in sandboxing, access control or audit logging.
+- Both are far more widely used than this young project; WinPC Remote is Windows-only on the target side, needs Python on Windows, and setting up the SSH tunnel takes more steps than a `pip install`.
+
+**Choose WinPC Remote if** the model runs on a Linux server, the target is your real daily-driver PC, and you want a human in the loop, a small tool surface and no open network port. **Choose a general automation server if** you need shell/registry/service control, OCR or recording, and you are willing to secure that surface yourself.
+
+*Corrections welcome: if something above is out of date or wrong, please open an issue.*
 
 ---
 
