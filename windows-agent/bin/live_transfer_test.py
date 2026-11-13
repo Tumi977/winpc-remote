@@ -1,7 +1,7 @@
-"""实机文件传输测试：在服务器上经隧道对真实 Windows Agent（需 0.3.0+）做上传/下载/校验。
+"""Live file-transfer test: uploads/downloads/verifies against the real Windows Agent (needs 0.3.0+) from the server through the tunnel.
 
-只在你指定的远端目录里创建 winpc-xfer-*.bin 测试文件（没有删除工具，测完请自行删除）。
-用法：
+Only creates winpc-xfer-*.bin test files in the remote directory you specify (there is no delete tool; delete them yourself afterwards).
+Usage:
     WINPC_TOKEN=... python live_transfer_test.py 'C:\\Users\\me\\Desktop\\winpc-transfer-test\\' [url]
 """
 import hashlib
@@ -18,7 +18,7 @@ cp = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cp)
 
 if len(sys.argv) < 2 or not sys.argv[1].endswith(("\\", "/")):
-    sys.exit("用法: live_transfer_test.py '<远端目录，以 \\ 结尾>' [url]")
+    sys.exit("Usage: live_transfer_test.py '<remote directory, ending with \\>' [url]")
 REMOTE_DIR = sys.argv[1]
 URL = sys.argv[2] if len(sys.argv) > 2 else cp.DEFAULT_URL
 sha = lambda b: hashlib.sha256(b).hexdigest()  # noqa: E731
@@ -38,45 +38,45 @@ def expect_error(fn, needle):
     try:
         fn()
     except cp.TransferError as e:
-        assert needle in str(e), f"错误信息不符: {e}"
+        assert needle in str(e), f"unexpected error message: {e}"
         return str(e)[:60]
-    raise AssertionError("本应被拒绝，但成功了")
+    raise AssertionError("should have been refused, but it succeeded")
 
 
 c = cp.McpClient(URL, os.environ["WINPC_TOKEN"])
 import atexit
-atexit.register(c.close)     # 结束时关闭 MCP 会话
+atexit.register(c.close)     # close the MCP session at exit
 tmp = Path(tempfile.mkdtemp())
 tag = f"winpc-xfer-{int(time.time())}"
 
-binary = os.urandom(3 * 1024 * 1024 + 321) + b"\x00\xff\xfe"                 # 3 块 + 零头，含 NUL / 非 UTF-8
-crlf = ("第一行\r\n第二行 emoji 🙂\r\nline3\r\n").encode("utf-8")              # 文本工具会把 CRLF 规范成 LF，这里必须保持
+binary = os.urandom(3 * 1024 * 1024 + 321) + b"\x00\xff\xfe"                 # 3 chunks + a remainder, with NUL / non-UTF-8
+crlf = ("\u7b2c\u4e00\u884c\r\n\u7b2c\u4e8c\u884c emoji \U0001f642\r\nline3\r\n").encode("utf-8")              # the text tools normalize CRLF to LF; here it must be preserved
 (tmp / "bin").write_bytes(binary)
 (tmp / "crlf").write_bytes(crlf)
 rb, rc = f"{REMOTE_DIR}{tag}.bin", f"{REMOTE_DIR}{tag}-crlf.txt"
 
-check("上传 3MiB 二进制", lambda: str(cp.put(c, str(tmp / "bin"), rb, quiet=True)["size"]) + " 字节")
-check("上传 CRLF 文本（字节级）", lambda: str(cp.put(c, str(tmp / "crlf"), rc, quiet=True)["size"]) + " 字节")
+check("upload 3 MiB binary", lambda: str(cp.put(c, str(tmp / "bin"), rb, quiet=True)["size"]) + " bytes")
+check("upload CRLF text (byte-exact)", lambda: str(cp.put(c, str(tmp / "crlf"), rc, quiet=True)["size"]) + " bytes")
 check("stat + sha256", lambda: "" if c.call("stat_file", path=rb, sha256=True)["sha256"] == sha(binary) else 1 / 0)
 
 
 def dl(remote, expect, name):
     out = tmp / name
     cp.get(c, remote, str(out), quiet=True, chunk=700_000)
-    assert out.read_bytes() == expect, "下载内容与原文件不一致"
-    return "逐字节一致"
+    assert out.read_bytes() == expect, "downloaded content differs from the original"
+    return "byte-identical"
 
 
-check("下载二进制并比对", lambda: dl(rb, binary, "bin.back"))
-check("下载 CRLF 文本并比对", lambda: dl(rc, crlf, "crlf.back"))
-check("覆盖保护(不加 overwrite 应拒绝)", lambda: expect_error(lambda: cp.put(c, str(tmp / "bin"), rb, quiet=True), "已存在"))
-check("overwrite 成功并产生备份", lambda: "备份: " + str(cp.put(c, str(tmp / "crlf"), rb, overwrite=True, quiet=True).get("backup")))
-check(".exe 上传被拦截", lambda: expect_error(lambda: cp.put(c, str(tmp / "bin"), f"{REMOTE_DIR}{tag}.exe", quiet=True), "不允许写入"))
+check("download binary and compare", lambda: dl(rb, binary, "bin.back"))
+check("download CRLF text and compare", lambda: dl(rc, crlf, "crlf.back"))
+check("overwrite protection (must refuse without overwrite)", lambda: expect_error(lambda: cp.put(c, str(tmp / "bin"), rb, quiet=True), "already exists"))
+check("overwrite succeeds and creates a backup", lambda: "backup: " + str(cp.put(c, str(tmp / "crlf"), rb, overwrite=True, quiet=True).get("backup")))
+check(".exe upload is blocked", lambda: expect_error(lambda: cp.put(c, str(tmp / "bin"), f"{REMOTE_DIR}{tag}.exe", quiet=True), "not allowed"))
 
 w = max(len(n) for n, *_ in results)
 for n, ok, info in results:
     print(f"{'PASS' if ok else 'FAIL'}  {n.ljust(w)}  {info}")
 bad = [n for n, ok, _ in results if not ok]
-print(f"\n{len(results) - len(bad)}/{len(results)} 通过" + (f"，失败: {bad}" if bad else ""))
-print(f"测试文件留在 {REMOTE_DIR}（{tag}*），请自行删除。")
+print(f"\n{len(results) - len(bad)}/{len(results)} passed" + (f", failed: {bad}" if bad else ""))
+print(f"Test files remain in {REMOTE_DIR} ({tag}*); please delete them yourself.")
 sys.exit(1 if bad else 0)

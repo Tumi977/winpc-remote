@@ -1,7 +1,7 @@
-"""Backend 抽象：WindowsBackend（真实）/ FakeBackend（测试）。
+"""Backend abstraction: WindowsBackend (real) / FakeBackend (for tests).
 
-本模块在 Linux 上必须可以被 import：所有 Windows 专用调用都放在
-WindowsBackend 的构造函数/方法里，平台判断也在构造函数里。
+This module must be importable on Linux: every Windows-specific call lives in
+the constructor/methods of WindowsBackend, and the platform check is in the constructor as well.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from PIL import Image, ImageDraw
 
 
 # --------------------------------------------------------------------------- #
-# 数据类型
+# Data types
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class Monitor:
@@ -32,42 +32,42 @@ class Monitor:
 class WindowInfo:
     handle: int
     title: str
-    process: str  # 小写进程名，如 "chrome.exe"；未知时为 ""
+    process: str  # lowercase process name, e.g. "chrome.exe"; "" when unknown
     left: int = 0
     top: int = 0
     width: int = 0
     height: int = 0
-    elevated: bool = False  # 目标进程是否以管理员身份运行
+    elevated: bool = False  # whether the target process runs as administrator
 
 
 class FailSafeTriggered(Exception):
-    """用户把鼠标甩到主屏左上角（紧急停止）。"""
+    """The user moved the mouse to the top-left corner of the primary screen (emergency stop)."""
 
 
 class BackendError(Exception):
-    """可直接展示给模型的后端错误（如 UIPI、激活窗口失败）。"""
+    """A backend error that can be shown directly to the model (e.g. UIPI, failure to activate a window)."""
 
 
 # --------------------------------------------------------------------------- #
-# 抽象
+# Abstraction
 # --------------------------------------------------------------------------- #
 class Backend(ABC):
     name = "abstract"
 
     @abstractmethod
     def monitors(self) -> list[Monitor]:
-        """各显示器（顺序对应工具参数 monitor=1..n），物理像素。"""
+        """All monitors (order matches the tool parameter monitor=1..n), in physical pixels."""
 
     @abstractmethod
     def grab(self, monitor: Monitor) -> Image.Image:
-        """以物理分辨率截取指定显示器，返回 RGB 图（不含鼠标指针）。"""
+        """Capture the given monitor at physical resolution and return an RGB image (without the mouse pointer)."""
 
     @abstractmethod
     def cursor_pos(self) -> tuple[int, int]: ...
 
     @abstractmethod
     def window_at_point(self, x: int, y: int) -> WindowInfo | None:
-        """物理坐标下的顶层窗口（GetAncestor(GA_ROOT)）。"""
+        """Top-level windows in physical coordinates (GetAncestor(GA_ROOT))."""
 
     @abstractmethod
     def foreground_window(self) -> WindowInfo | None: ...
@@ -95,31 +95,31 @@ class Backend(ABC):
 
     @abstractmethod
     def press_keys(self, keys: list[str], repeat: int) -> None:
-        """按下组合键 keys（已规范化的名字，如 ["ctrl","shift","escape"]）。"""
+        """Press the key combination `keys` (normalized names, e.g. ["ctrl","shift","escape"])."""
 
     @abstractmethod
     def confirm(self, title: str, message: str, timeout_s: float) -> bool:
-        """本机弹出置顶 是/否 框；超时或否 → False。"""
+        """Show a topmost yes/no dialog on this machine; timeout or no -> False."""
 
     def paste_text(self, text: str) -> str:
-        """通过剪贴板粘贴文本（原子操作，不受目标程序按键处理卡顿影响）。返回一条说明（可为空）。"""
-        raise BackendError("该后端不支持粘贴输入。")
+        """Paste text through the clipboard (atomic; unaffected by the target app stalling on key handling). Returns a note (may be empty)."""
+        raise BackendError("This backend does not support paste input.")
 
     def is_self_elevated(self) -> bool:
         return False
 
 
 # --------------------------------------------------------------------------- #
-# FakeBackend（测试用）
+# FakeBackend (for tests)
 # --------------------------------------------------------------------------- #
 class FakeBackend(Backend):
-    """内存画布，记录所有动作。
+    """In-memory canvas that records all actions.
 
-    actions: 动作记录，如 {"op": "click", "x": 1280, "y": 720, ...}
-    foreground_process / point_process: 前台窗口 / 坐标下窗口的进程名
-    confirm_result: 弹窗返回值；confirm_calls: 询问记录
-    failsafe_armed: 置 True 则下一个输入动作抛 FailSafeTriggered
-    black: 置 True 则截图全黑（模拟锁屏）
+    actions: the action log, e.g. {"op": "click", "x": 1280, "y": 720, ...}
+    foreground_process / point_process: process names of the foreground window / the window under the coordinates
+    confirm_result: the dialog return value; confirm_calls: the log of questions asked
+    failsafe_armed: when True, the next input action raises FailSafeTriggered
+    black: when True, screenshots are completely black (simulates a locked screen)
     """
 
     name = "fake"
@@ -128,14 +128,14 @@ class FakeBackend(Backend):
         self._monitors = monitors or [Monitor(0, 0, 2560, 1440)]
         self.actions: list[dict] = []
         self.foreground_process = "notepad.exe"
-        self.foreground_title = "无标题 - 记事本"
-        self.point_process: str | None = None  # None → 与前台相同
+        self.foreground_title = "Untitled - Notepad"
+        self.point_process: str | None = None  # None -> same as the foreground
         self.windows: list[WindowInfo] = [
-            WindowInfo(1001, "无标题 - 记事本", "notepad.exe", 100, 100, 800, 600),
+            WindowInfo(1001, "Untitled - Notepad", "notepad.exe", 100, 100, 800, 600),
             WindowInfo(1002, "Google Chrome", "chrome.exe", 200, 150, 1200, 800),
         ]
         self.confirm_result = True
-        self.during_confirm = None        # 可选回调：在 confirm 期间执行
+        self.during_confirm = None        # optional callback: runs during confirm
         self.confirm_calls: list[tuple[str, str, float]] = []
         self.failsafe_armed = False
         self.black = False
@@ -143,7 +143,7 @@ class FakeBackend(Backend):
         self.self_elevated = False
         self._cursor = (10, 10)
 
-    # -- 查询 --
+    # -- queries --
     def monitors(self) -> list[Monitor]:
         return list(self._monitors)
 
@@ -179,7 +179,7 @@ class FakeBackend(Backend):
     def is_self_elevated(self) -> bool:
         return self.self_elevated
 
-    # -- 动作 --
+    # -- actions --
     def _act(self, **rec) -> None:
         if self.failsafe_armed:
             self.failsafe_armed = False
@@ -221,14 +221,14 @@ class FakeBackend(Backend):
     def confirm(self, title, message, timeout_s):
         self.confirm_calls.append((title, message, timeout_s))
         if self.during_confirm:
-            self.during_confirm()      # 模拟确认框抢走焦点，导致前台窗口/鼠标下的窗口变化
+            self.during_confirm()      # simulate the dialog stealing focus, which changes the foreground window / the window under the mouse
         return self.confirm_result
 
 
 # --------------------------------------------------------------------------- #
-# WindowsBackend（真实）
+# WindowsBackend (real)
 # --------------------------------------------------------------------------- #
-# SendInput 结构体（在 Linux 上定义也不会出错，只是不会被使用）
+# SendInput structures (defining them on Linux is harmless; they are just not used)
 _ULONG_PTR = ctypes.c_size_t
 
 
@@ -275,17 +275,17 @@ class WindowsBackend(Backend):
 
     def __init__(self, type_chunk_chars: int = 1, type_delay_ms: float = 5,
                  type_newline_delay_ms: float = 150, paste_restore_delay_ms: float = 600) -> None:
-        # type_text 的节奏：每 type_chunk_chars 个字符一次 SendInput，批与批之间睡 type_delay_ms 毫秒。
-        # 一次塞进几十个字符时，新版记事本（WinUI）会丢字或把整行变成同一个字符重复，所以默认逐字符 + 5ms。
+        # type_text pacing: one SendInput per type_chunk_chars characters, sleeping type_delay_ms milliseconds between batches.
+        # When dozens of characters are pushed at once, the new Notepad (WinUI) drops characters or repeats one character for the whole line, so the default is per character + 5 ms.
         self.type_chunk_chars = max(1, int(type_chunk_chars))
         self.type_delay_s = max(0.0, float(type_delay_ms)) / 1000
-        # 回车会让部分应用（如新版记事本）卡顿一下，期间堆积的按键会被合并成同一个字符，所以回车后多等一会
+        # Enter stalls some apps (e.g. the new Notepad) for a moment, and keys that pile up meanwhile get merged into one character, so wait longer after Enter
         self.type_newline_delay_s = max(0.0, float(type_newline_delay_ms)) / 1000
-        # 粘贴后要等应用真正读走剪贴板，才能恢复原来的剪贴板内容
+        # After pasting, wait until the app has really read the clipboard before restoring the original clipboard contents
         self.paste_restore_delay_s = max(0.0, float(paste_restore_delay_ms)) / 1000
         if sys.platform != "win32":
-            raise RuntimeError("WindowsBackend 只能在 Windows 上使用（可用 --backend fake 测试）")
-        # DPI 感知：必须在任何截图/坐标操作之前（第 5 节第 1 条）
+            raise RuntimeError("WindowsBackend can only be used on Windows (use --backend fake for testing)")
+        # DPI awareness: must be set before any screenshot/coordinate operation
         try:
             ctypes.windll.shcore.SetProcessDpiAwareness(2)
         except Exception:
@@ -294,10 +294,10 @@ class WindowsBackend(Backend):
             except Exception:
                 pass
 
-        import mss  # noqa: F401  延迟导入，避免 Linux 无显示环境下失败
+        import mss  # noqa: F401  imported lazily so that import does not fail on Linux without a display
         import pyautogui
 
-        pyautogui.FAILSAFE = True  # 鼠标在主屏左上角 → FailSafeException
+        pyautogui.FAILSAFE = True  # mouse in the top-left corner of the primary screen -> FailSafeException
         pyautogui.PAUSE = 0
         self._pag = pyautogui
         self._mss = mss
@@ -309,7 +309,7 @@ class WindowsBackend(Backend):
         self._setup_prototypes()
         self._pid_cache: dict[int, tuple[str, bool]] = {}
 
-    # -- ctypes 原型：64 位下 HWND 必须声明，否则会被截断 --
+    # -- ctypes prototypes: on 64-bit, HWND must be declared or it gets truncated --
     def _setup_prototypes(self) -> None:
         u, k, a = self.user32, self.kernel32, self.advapi32
         u.WindowFromPoint.argtypes = [wt.POINT]
@@ -331,7 +331,7 @@ class WindowsBackend(Backend):
         u.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
         u.GetCursorPos.argtypes = [ctypes.POINTER(wt.POINT)]
         u.keybd_event.argtypes = [wt.BYTE, wt.BYTE, wt.DWORD, _ULONG_PTR]
-        # 剪贴板（指针/句柄一律用 c_void_p，64 位下不能被截断）
+        # clipboard (always use c_void_p for pointers/handles; they must not be truncated on 64-bit)
         u.OpenClipboard.argtypes, u.OpenClipboard.restype = [wt.HWND], wt.BOOL
         u.CloseClipboard.restype = wt.BOOL
         u.EmptyClipboard.restype = wt.BOOL
@@ -362,14 +362,14 @@ class WindowsBackend(Backend):
         a.GetTokenInformation.argtypes = [wt.HANDLE, ctypes.c_int, ctypes.c_void_p, wt.DWORD,
                                           ctypes.POINTER(wt.DWORD)]
 
-    # -- 截图 --
+    # -- screenshots --
     def monitors(self) -> list[Monitor]:
         with self._mss.mss() as sct:
             return [Monitor(m["left"], m["top"], m["width"], m["height"]) for m in sct.monitors[1:]]
 
     def grab(self, monitor: Monitor) -> Image.Image:
         region = {"left": monitor.left, "top": monitor.top, "width": monitor.width, "height": monitor.height}
-        with self._mss.mss() as sct:  # mss 实例不跨线程复用
+        with self._mss.mss() as sct:  # mss instances are not reused across threads
             shot = sct.grab(region)
         return Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
 
@@ -378,14 +378,14 @@ class WindowsBackend(Backend):
         self.user32.GetCursorPos(ctypes.byref(pt))
         return pt.x, pt.y
 
-    # -- 窗口 / 进程 --
+    # -- windows / processes --
     def _process_info(self, pid: int) -> tuple[str, bool]:
-        """返回 (小写进程名, 是否提权)。"""
+        """Return (lowercase process name, whether elevated)."""
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
         TOKEN_QUERY = 0x0008
         h = self.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
         if not h:
-            # 打不开多半是更高权限进程；名字未知，按提权处理
+            # If it cannot be opened it is most likely a higher-privilege process; the name is unknown, so treat it as elevated
             return "", True
         try:
             buf = ctypes.create_unicode_buffer(1024)
@@ -461,7 +461,7 @@ class WindowsBackend(Backend):
         u = self.user32
         if not u.IsWindow(handle):
             return False
-        # 后台进程调用 SetForegroundWindow 受限：先合成一次 Alt 按键（第 7 节第 7 条）
+        # SetForegroundWindow is restricted for background processes: synthesize an Alt key press first
         u.keybd_event(_VK_MENU, 0, 0, 0)
         u.keybd_event(_VK_MENU, 0, _KEYEVENTF_KEYUP, 0)
         if u.IsIconic(handle):
@@ -471,9 +471,9 @@ class WindowsBackend(Backend):
         fg = u.GetForegroundWindow()
         return bool(fg) and int(fg) == int(handle)
 
-    # -- 输入 --
+    # -- input --
     def _failsafe_check(self) -> None:
-        """与 pyautogui 的 FAILSAFE 语义一致：动作开始前鼠标在主屏左上角 → 紧急停止。"""
+        """Same semantics as pyautogui FAILSAFE: if the mouse is in the top-left corner of the primary screen before an action starts -> emergency stop."""
         if self.cursor_pos() == (0, 0):
             raise FailSafeTriggered()
 
@@ -484,7 +484,7 @@ class WindowsBackend(Backend):
         sent = self.user32.SendInput(len(inputs), arr, ctypes.sizeof(_INPUT))
         if sent != len(inputs):
             raise BackendError(
-                "SendInput 被拒绝：目标窗口可能以管理员身份运行（UIPI），或当前处于安全桌面/UAC 弹窗。"
+                "SendInput was rejected: the target window may run as administrator (UIPI), or the desktop is currently a secure desktop / UAC prompt."
             )
 
     def _mouse_event(self, flags: int, data: int = 0) -> None:
@@ -493,9 +493,9 @@ class WindowsBackend(Backend):
         self._send([inp])
 
     def _move(self, x: int, y: int) -> None:
-        # SetCursorPos 使用虚拟桌面物理坐标，多显示器/负坐标都正确
+        # SetCursorPos uses physical coordinates of the virtual desktop; multiple monitors / negative coordinates are handled correctly
         if not self.user32.SetCursorPos(int(x), int(y)):
-            raise BackendError(f"移动鼠标到 ({x},{y}) 失败")
+            raise BackendError(f"Failed to move the mouse to ({x},{y})")
         time.sleep(0.03)
 
     def _translate_failsafe(self, fn: Callable[[], None]) -> None:
@@ -542,7 +542,7 @@ class WindowsBackend(Backend):
     def scroll(self, x, y, direction, amount):
         self._failsafe_check()
         self._move(x, y)
-        delta = amount * _WHEEL_DELTA  # 第 7 节第 10 条：1 格 = 120
+        delta = amount * _WHEEL_DELTA  # 1 notch = 120
         if direction == "up":
             self._mouse_event(_MOUSEEVENTF_WHEEL, delta)
         elif direction == "down":
@@ -554,8 +554,8 @@ class WindowsBackend(Backend):
 
     @staticmethod
     def _char_events(text: str) -> list[list[_INPUT]]:
-        """把文本变成“每个字符一组”的按键事件。一个字符的全部事件必须在同一组里：
-        emoji 是 UTF-16 代理对（两个码元），拆开发送会得到乱码。"""
+        """Turn text into key events grouped "one group per character". All events of one character must be in the same group:
+        an emoji is a UTF-16 surrogate pair (two code units), and sending them separately produces garbage."""
         def key(vk: int = 0, scan: int = 0, flags: int = 0) -> _INPUT:
             inp = _INPUT(type=_INPUT_KEYBOARD)
             inp.ki = _KEYBDINPUT(vk, scan, flags, 0, 0)
@@ -581,19 +581,19 @@ class WindowsBackend(Backend):
         for i in range(0, len(groups), self.type_chunk_chars):
             chunk = groups[i:i + self.type_chunk_chars]
             self._send([e for g in chunk for e in g])
-            pause = self.type_delay_s            # 给目标程序时间按序处理，否则会丢字/错字
+            pause = self.type_delay_s            # give the target app time to process in order, otherwise characters are dropped/garbled
             if any(g[0].ki.wVk == _VK_RETURN for g in chunk):
                 pause = max(pause, self.type_newline_delay_s)
             if pause:
                 time.sleep(pause)
 
-    # -- 剪贴板粘贴 --
+    # -- clipboard paste --
     def _clip_open(self, hwnd) -> None:
-        for _ in range(20):                      # 剪贴板可能被其他程序短暂占用
+        for _ in range(20):                      # the clipboard may be briefly held by another program
             if self.user32.OpenClipboard(hwnd):
                 return
             time.sleep(0.05)
-        raise BackendError("剪贴板被其他程序占用，无法粘贴。")
+        raise BackendError("The clipboard is held by another program; cannot paste.")
 
     def _clip_get_text(self) -> str | None:
         h = self.user32.GetClipboardData(_CF_UNICODETEXT)
@@ -602,7 +602,7 @@ class WindowsBackend(Backend):
         size = self.kernel32.GlobalSize(h)
         p = self.kernel32.GlobalLock(h)
         try:
-            raw = ctypes.string_at(p, size)             # 有界读取，显式按 UTF-16-LE 解码（与平台的 wchar_t 宽度无关）
+            raw = ctypes.string_at(p, size)             # bounded read, explicitly decoded as UTF-16-LE (independent of the platform wchar_t width)
         finally:
             self.kernel32.GlobalUnlock(h)
         return raw.decode("utf-16-le", errors="replace").split("\0", 1)[0]
@@ -611,16 +611,16 @@ class WindowsBackend(Backend):
         data = (text + "\0").encode("utf-16-le")
         h = self.kernel32.GlobalAlloc(0x0002, len(data))            # GMEM_MOVEABLE
         if not h:
-            raise BackendError("分配剪贴板内存失败。")
+            raise BackendError("Failed to allocate clipboard memory.")
         ctypes.memmove(self.kernel32.GlobalLock(h), data, len(data))
         self.kernel32.GlobalUnlock(h)
         if not self.user32.SetClipboardData(_CF_UNICODETEXT, h):
             self.kernel32.GlobalFree(h)
-            raise BackendError("写入剪贴板失败。")
+            raise BackendError("Failed to write to the clipboard.")
 
     def paste_text(self, text: str) -> str:
-        """备份文本剪贴板 → 写入 → Ctrl+V → 等应用读走 → 恢复。OpenClipboard(NULL) 之后 SetClipboardData 会失败，
-        所以用一个临时的隐藏窗口作为剪贴板所有者。"""
+        """Back up the text clipboard -> write -> Ctrl+V -> wait for the app to read it -> restore. After OpenClipboard(NULL) SetClipboardData fails,
+        so a temporary hidden window is used as the clipboard owner."""
         self._failsafe_check()
         text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
         if not text:
@@ -628,7 +628,7 @@ class WindowsBackend(Backend):
         u = self.user32
         owner = u.CreateWindowExW(0, "STATIC", None, 0, 0, 0, 0, 0, None, None, None, None)
         if not owner:
-            raise BackendError("无法创建剪贴板所有者窗口。")
+            raise BackendError("Cannot create the clipboard owner window.")
         orig, other_formats = None, 0
         try:
             self._clip_open(owner)
@@ -652,7 +652,7 @@ class WindowsBackend(Backend):
                 self._send([key(0x11), key(0x56), key(0x56, True), key(0x11, True)])   # Ctrl+V
                 time.sleep(self.paste_restore_delay_s)
             finally:
-                try:                                  # 无论粘贴是否成功都要恢复剪贴板
+                try:                                  # restore the clipboard whether or not the paste succeeded
                     self._clip_open(owner)
                     try:
                         u.EmptyClipboard()
@@ -665,13 +665,13 @@ class WindowsBackend(Backend):
         finally:
             u.DestroyWindow(owner)
         if other_formats:
-            return f"（注意：原剪贴板里有 {other_formats} 种非文本格式，已被替换；只恢复了其中的文本。）"
+            return f"(Note: the original clipboard held {other_formats} non-text format(s), which were replaced; only the text was restored.)"
         return ""
 
     def press_keys(self, keys, repeat):
         unknown = [k for k in keys if k not in self._pag.KEYBOARD_KEYS]
         if unknown:
-            raise BackendError(f"不支持的按键: {', '.join(unknown)}")
+            raise BackendError(f"Unsupported key: {', '.join(unknown)}")
         for _ in range(repeat):
             if len(keys) == 1:
                 self._translate_failsafe(lambda: self._pag.press(keys[0]))
@@ -679,16 +679,16 @@ class WindowsBackend(Backend):
                 self._translate_failsafe(lambda: self._pag.hotkey(*keys))
             time.sleep(0.03)
 
-    # -- 弹窗 --
-    dialog_slack_s = 15.0       # 子进程比倒计时多给的宽限（启动慢、系统繁忙时）
+    # -- dialog --
+    dialog_slack_s = 15.0       # extra grace the subprocess gets beyond the countdown (slow start, busy system)
 
     def _confirm_tk(self, title: str, message: str, timeout_s: float) -> bool | None:
-        """在**独立的子进程**里显示授权框（屏幕顶部居中、置顶、不抢焦点），Agent 只读它的结果。
+        """Show the approval dialog in a **separate subprocess** (centered at the top of the screen, topmost, without stealing focus); the Agent only reads its result.
 
-        不能在 Agent 的工作线程里跑 tkinter：Tk 对象必须在创建它的线程里销毁，授权框关闭后被别的线程的
-        垃圾回收销毁时，Tcl 会 `Tcl_AsyncDelete: async handler deleted by the wrong thread` 直接 abort 整个进程
-        （实机上授权框超时后 Agent 就是这样崩溃的）。进程隔离后，子进程出任何问题都只会让本函数返回 None
-        （由调用方回退到系统消息框），不会影响 Agent。返回 None = 子进程不可用；True/False = 用户的选择。
+        tkinter must not run in an Agent worker thread: a Tk object has to be destroyed in the thread that created it. When the closed dialog is destroyed by garbage collection in another thread,
+        Tcl aborts the whole process with `Tcl_AsyncDelete: async handler deleted by the wrong thread`
+        (this is how the Agent crashed on a real machine after a dialog timeout). With process isolation, any problem in the subprocess only makes this function return None
+        (the caller then falls back to a system message box) and never affects the Agent. Returns None = subprocess unavailable; True/False = the user's choice.
         """
         import json
         import subprocess
@@ -698,13 +698,13 @@ class WindowsBackend(Backend):
             r = subprocess.run(cmd, input=payload, capture_output=True, text=True, encoding="utf-8",
                                timeout=timeout_s + self.dialog_slack_s, creationflags=_CREATE_NO_WINDOW)
         except subprocess.TimeoutExpired:
-            return False                      # 子进程被 run() 杀掉；超时视为拒绝
-        except Exception:                     # noqa: BLE001  无法启动子进程
+            return False                      # the subprocess was killed by run(); a timeout counts as denial
+        except Exception:                     # noqa: BLE001  the subprocess could not be started
             return None
         for line in reversed((r.stdout or "").splitlines()):
             if line.strip() in (_DIALOG_YES, _DIALOG_NO):
                 return line.strip() == _DIALOG_YES
-        return None                           # 子进程崩溃/没有输出：回退
+        return None                           # the subprocess crashed / produced no output: fall back
 
     @staticmethod
     def _dialog_command() -> list[str]:
@@ -716,7 +716,7 @@ class WindowsBackend(Backend):
             if answer is not None:
                 return answer
         except Exception:
-            pass                                       # 任何问题都回退到系统消息框，保证一定能让用户做出选择
+            pass                                       # any problem falls back to the system message box, so the user can always decide
         return self._confirm_messagebox(title, message, timeout_s)
 
     def _confirm_messagebox(self, title: str, message: str, timeout_s: float) -> bool:
@@ -725,7 +725,7 @@ class WindowsBackend(Backend):
         flags = MB_YESNO | MB_ICONQUESTION | MB_TOPMOST | MB_SETFOREGROUND | MB_SYSTEMMODAL
         IDYES = 6
         try:
-            fn = self.user32.MessageBoxTimeoutW  # 未公开但长期存在
+            fn = self.user32.MessageBoxTimeoutW  # undocumented but long-standing
         except AttributeError:
             fn = None
         if fn is not None:
@@ -745,11 +745,11 @@ class WindowsBackend(Backend):
 
 
 # --------------------------------------------------------------------------- #
-# 授权框（在独立子进程里运行：python backends.py --confirm-dialog，参数从 stdin 读 JSON）
-# 这里的 tkinter 全部在本进程的主线程里创建和销毁，不存在跨线程销毁的问题。
+# Approval dialog (runs in a separate subprocess: python backends.py --confirm-dialog, parameters read as JSON from stdin)
+# All tkinter objects here are created and destroyed in this process's main thread, so there is no cross-thread destruction problem.
 # --------------------------------------------------------------------------- #
 def _make_noactivate(hwnd: int) -> None:
-    """让窗口置顶、且点击它不会抢走前台窗口。"""
+    """Make the window topmost, and make clicking it not steal the foreground window."""
     u = ctypes.WinDLL("user32", use_last_error=True)
     u.GetWindowLongPtrW.argtypes, u.GetWindowLongPtrW.restype = [wt.HWND, ctypes.c_int], ctypes.c_ssize_t
     u.SetWindowLongPtrW.argtypes = [wt.HWND, ctypes.c_int, ctypes.c_ssize_t]
@@ -772,7 +772,7 @@ def run_confirm_dialog(title: str, message: str, timeout_s: float) -> bool:
     after_id = None
     try:
         root.withdraw()
-        root.overrideredirect(True)                 # 无标题栏的弹出窗口：显示时不会被激活
+        root.overrideredirect(True)                 # a popup without a title bar: it is not activated when shown
         root.attributes("-topmost", True)
         font = "Microsoft YaHei UI"
         frame = tk.Frame(root, bg="#202020", highlightbackground="#e0a800", highlightthickness=3)
@@ -789,9 +789,9 @@ def run_confirm_dialog(title: str, message: str, timeout_s: float) -> bool:
         def done(v: bool) -> None:
             result["yes"] = v
             root.quit()
-        tk.Button(btns, text="允许", width=14, bg="#2e7d32", fg="white", activebackground="#388e3c",
+        tk.Button(btns, text="Allow", width=14, bg="#2e7d32", fg="white", activebackground="#388e3c",
                   font=(font, 10, "bold"), command=lambda: done(True)).pack(side="left", padx=12)
-        tk.Button(btns, text="拒绝", width=14, bg="#c62828", fg="white", activebackground="#d32f2f",
+        tk.Button(btns, text="Deny", width=14, bg="#c62828", fg="white", activebackground="#d32f2f",
                   font=(font, 10, "bold"), command=lambda: done(False)).pack(side="left", padx=12)
         deadline = time.time() + timeout_s
 
@@ -801,12 +801,12 @@ def run_confirm_dialog(title: str, message: str, timeout_s: float) -> bool:
             if remain <= 0:
                 done(False)
                 return
-            countdown.config(text=f"{remain} 秒内未选择视为拒绝")
+            countdown.config(text=f"No choice within {remain} s counts as denial")
             after_id = root.after(250, tick)
         tick()
         root.update_idletasks()
         w, h = root.winfo_reqwidth(), root.winfo_reqheight()
-        root.geometry(f"{w}x{h}+{max(0, (root.winfo_screenwidth() - w) // 2)}+60")   # 屏幕顶部居中
+        root.geometry(f"{w}x{h}+{max(0, (root.winfo_screenwidth() - w) // 2)}+60")   # centered at the top of the screen
         root.deiconify()
         root.update()
         _make_noactivate(root.winfo_id())
@@ -830,8 +830,8 @@ def _dialog_main() -> int:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:       # noqa: BLE001
         pass
-    # 必须读字节并显式按 UTF-8 解码：sys.stdin 默认按系统代码页（中文 Windows 是 GBK）解码，授权框里的中文会乱码；
-    # 同时容忍 BOM（PowerShell 5.1 往管道写字符串会带 UTF-8 BOM）。
+    # Must read bytes and decode explicitly as UTF-8: sys.stdin decodes with the system code page by default (GBK on Chinese Windows), which garbles non-ASCII text in the dialog;
+    # also tolerate a BOM (PowerShell 5.1 prepends a UTF-8 BOM when writing a string to a pipe).
     args = json.loads(sys.stdin.buffer.read().decode("utf-8-sig"))
     yes = run_confirm_dialog(args["title"], args["message"], float(args["timeout_s"]))
     print(_DIALOG_YES if yes else _DIALOG_NO, flush=True)

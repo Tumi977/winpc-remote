@@ -1,28 +1,28 @@
-# 安全策略
+# Security policy
 
-WinPC Remote 让远程模型控制一台真实的 Windows 电脑，因此安全问题我们很重视。
+WinPC Remote lets a remote model control a real Windows PC, so we take security issues seriously.
 
-## 如何报告漏洞
+## How to report a vulnerability
 
-**请不要在公开 Issue 里披露漏洞细节。**
+**Please do not disclose vulnerability details in a public Issue.**
 
-- 优先使用 GitHub 的 *Security → Report a vulnerability*（私密漏洞报告）；
-- 报告里请包含：受影响的版本（`get_status` 里的 `agent_version`）、复现步骤、你认为的影响（例如“在 prompt 模式下无需确认即可读取 X”）。
+- Prefer GitHub's *Security -> Report a vulnerability* (private vulnerability reporting);
+- Please include in the report: the affected version (`agent_version` from `get_status`), reproduction steps, and the impact you see (for example, "in prompt mode X can be read without confirmation").
 
-**请不要**在报告、截图或日志里附带真实的令牌、私钥或私人屏幕内容；用假数据复现即可。
+**Please do not** attach real tokens, private keys or private screen content to reports, screenshots or logs; reproduce with fake data.
 
-## 范围
+## Scope
 
-我们关心的问题包括：绕过令牌鉴权 / Host / Origin 校验；绕过应用或文件授权（黑名单、敏感路径、`file_roots`、扩展名拦截、符号链接/UNC/备用数据流等）；通过文件工具或传输工具（`get_file` / `put_file`）读取或修改令牌、私钥、Agent 自身目录，或绕过授权；紧急停止被远程解除；审计日志泄露本不应记录的内容。
+We care about: bypassing token authentication or the Host / Origin checks; bypassing application or file authorization (block-lists, sensitive paths, `file_roots`, extension blocking, symlinks/UNC/alternate data streams, etc.); reading or modifying the token, private keys or the Agent's own directory through the file tools or the transfer tools (`get_file` / `put_file`), or bypassing authorization; the emergency stop being lifted remotely; the audit log leaking content that should not be recorded.
 
-以下属于**已知的设计限制**，不算漏洞，详见 README「安全模型与已知风险」：
+The following are **known design limitations**, not vulnerabilities; see "Security model and known risks" in the README:
 
-- `approval_mode: all` / `bypass` 去掉了确认框；
-- 应用授权不是沙箱：被批准的应用（终端、资源管理器的运行框等）可以启动任意程序；
-- 屏幕内容导致的提示词注入只能被缓解、不能杜绝；
-- 同一 Windows 账户下的其他恶意程序可以读取明文令牌；
-- 敏感路径黑名单无法穷尽所有软件的凭据位置。
+- `approval_mode: all` / `bypass` removes the confirmation dialogs;
+- application authorization is not a sandbox: an approved application (a terminal, the Run box of the file manager, etc.) can launch arbitrary programs;
+- prompt injection through screen content can only be mitigated, not eliminated;
+- other malicious programs under the same Windows account can read the plain-text token;
+- the sensitive-path block-list cannot cover the credential locations of every piece of software.
 
-## 受支持的版本
+## Supported versions
 
-只修复最新发布版本。升级前请先看 README 的「变更」一节。
+Only the latest release is fixed. Before upgrading, read the "Changelog" section of the README.

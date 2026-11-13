@@ -1,4 +1,4 @@
-"""端到端：随机端口起真实的 HTTP MCP 服务（FakeBackend），用 MCP 客户端调用全部工具。"""
+"""End to end: start a real HTTP MCP server on a random port (FakeBackend) and call all tools with an MCP client."""
 import base64
 import io
 import socket
@@ -35,7 +35,7 @@ def server(tmp_path):
     t.start()
     deadline = time.time() + 10
     while not srv.started:
-        assert time.time() < deadline, "服务器启动超时"
+        assert time.time() < deadline, "server start-up timed out"
         time.sleep(0.05)
     yield f"http://127.0.0.1:{port}/mcp", backend, agent
     srv.should_exit = True
@@ -53,7 +53,7 @@ INIT_BODY = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
 HDRS = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
 
 
-# ----------------------------- 鉴权 / Host ----------------------------- #
+# ----------------------------- auth / Host ----------------------------- #
 def test_no_token_401(server):
     url, *_ = server
     assert httpx.post(url, json=INIT_BODY, headers=HDRS).status_code == 401
@@ -78,7 +78,7 @@ def test_good_token_and_host_accepted(server):
     assert r.status_code == 200
 
 
-# ----------------------------- 工具 ----------------------------- #
+# ----------------------------- tools ----------------------------- #
 async def test_list_tools(server):
     url, *_ = server
     async with mcp_client(url) as c:
@@ -96,12 +96,12 @@ async def test_screenshot_content(server):
     assert img.mime_type == "image/jpeg"
     decoded = Image.open(io.BytesIO(base64.b64decode(img.data)))
     assert decoded.format == "JPEG" and decoded.size == (1280, 720)
-    assert r.structured_content is None  # 绝不能带 structuredContent
+    assert r.structured_content is None  # must never carry structuredContent
     assert "1280x720" in r.content[0].text and "2560x1440" in r.content[0].text
 
 
 async def test_raw_response_has_no_structured_content(server):
-    """直接看线上 JSON，确认没有 structuredContent 字段（Claude Code 会因此丢图）。"""
+    """Look at the JSON on the wire and confirm there is no structuredContent field (Claude Code would drop images because of it)."""
     url, *_ = server
     h = {**HDRS, "Authorization": f"Bearer {TOKEN}"}
     with httpx.Client() as http:
@@ -119,7 +119,7 @@ async def test_click_type_press(server):
     async with mcp_client(url) as c:
         await c.call_tool("screenshot", {})
         r = await c.call_tool("click", {"x": 640, "y": 360})
-        assert not r.is_error and [x.type for x in r.content] == ["text", "image"]  # 动作后附带截图
+        assert not r.is_error and [x.type for x in r.content] == ["text", "image"]  # a screenshot is attached after the action
         assert fb.actions[-1] == {"op": "click", "x": 1280, "y": 720, "button": "left", "clicks": 1,
                                   "modifiers": []}
 
@@ -129,8 +129,8 @@ async def test_click_type_press(server):
         assert fb.actions[-1] == {"op": "click", "x": 200, "y": 200, "button": "right", "clicks": 2,
                                   "modifiers": ["ctrl", "shift"]}
 
-        await c.call_tool("type_text", {"text": "你好🙂", "press_enter": True, "screenshot_after": False})
-        assert fb.actions[-2]["op"] == "type_text" and fb.actions[-2]["text"] == "你好🙂"
+        await c.call_tool("type_text", {"text": "\u4f60\u597d🙂", "press_enter": True, "screenshot_after": False})
+        assert fb.actions[-2]["op"] == "type_text" and fb.actions[-2]["text"] == "\u4f60\u597d🙂"
         assert fb.actions[-1] == {"op": "press_keys", "keys": ["enter"], "repeat": 1}
 
         await c.call_tool("press_key", {"keys": "ctrl+s", "screenshot_after": False})
@@ -151,7 +151,7 @@ async def test_remaining_tools(server):
 
         z = await c.call_tool("zoom", {"x1": 0, "y1": 0, "x2": 100, "y2": 50})
         assert z.content[1].mime_type == "image/jpeg"
-        assert Image.open(io.BytesIO(base64.b64decode(z.content[1].data))).size == (200, 100)  # 原生分辨率
+        assert Image.open(io.BytesIO(base64.b64decode(z.content[1].data))).size == (200, 100)  # native resolution
 
         w = await c.call_tool("wait", {"seconds": 0.05})
         assert [x.type for x in w.content] == ["text", "image"]
@@ -174,32 +174,32 @@ async def test_errors_and_pause_over_http(server):
         assert r.is_error and "screenshot" in r.content[0].text
         await c.call_tool("screenshot", {})
         r = await c.call_tool("click", {"x": 99999, "y": 1})
-        assert r.is_error and "超出" in r.content[0].text
+        assert r.is_error and "outside" in r.content[0].text
         fb.failsafe_armed = True
         r = await c.call_tool("click", {"x": 1, "y": 1})
-        assert r.is_error and "暂停" in r.content[0].text
+        assert r.is_error and "Paused" in r.content[0].text
         r = await c.call_tool("type_text", {"text": "x"})
-        assert r.is_error and "暂停" in r.content[0].text
+        assert r.is_error and "Paused" in r.content[0].text
         r = await c.call_tool("screenshot", {})
         assert not r.is_error
 
 
 async def test_file_tools_over_http(server, tmp_path):
-    """文件工具走真实 HTTP：写入需确认，读取在 roots 内免确认，修改可回读。"""
+    """File tools over real HTTP: writes need confirmation, reads inside roots do not, an edit can be read back."""
     url, fb, agent = server
     root = tmp_path / "docs"
     root.mkdir()
     agent.policy.roots.append(str(root.resolve()))
     f = str(root / "note.txt")
     async with mcp_client(url) as c:
-        r = await c.call_tool("write_file", {"path": f, "content": "你好🙂\n第二行\n"})
-        assert not r.is_error and [x.type for x in r.content] == ["text"]  # 文件工具不附截图
+        r = await c.call_tool("write_file", {"path": f, "content": "\u4f60\u597d🙂\n\u7b2c\u4e8c\u884c\n"})
+        assert not r.is_error and [x.type for x in r.content] == ["text"]  # file tools attach no screenshot
         assert len(fb.confirm_calls) == 1
         r = await c.call_tool("read_file", {"path": f})
-        assert "你好🙂" in r.content[0].text and r.structured_content is None
-        r = await c.call_tool("edit_file", {"path": f, "old_string": "第二行", "new_string": "第 2 行"})
+        assert "\u4f60\u597d🙂" in r.content[0].text and r.structured_content is None
+        r = await c.call_tool("edit_file", {"path": f, "old_string": "\u7b2c\u4e8c\u884c", "new_string": "\u7b2c\u0020\u0032\u0020\u884c"})
         assert not r.is_error
-        assert "第 2 行" in (await c.call_tool("read_file", {"path": f})).content[0].text
+        assert "\u7b2c\u0020\u0032\u0020\u884c" in (await c.call_tool("read_file", {"path": f})).content[0].text
         assert "note.txt" in (await c.call_tool("list_files", {"path": str(root)})).content[0].text
         r = await c.call_tool("read_file", {"path": str(root / ".ssh" / "id_rsa")})
         assert r.is_error

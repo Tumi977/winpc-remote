@@ -19,12 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: 检查仓库里没有误提交的令牌/私钥
+      - name: Check that no token / private key was committed by mistake
         run: |
-          # 选项必须放在模式之前；模式以 - 开头，所以用 -e。grep 出错（退出码 2）也要让 CI 失败，避免假绿。
+          # Options must come before the pattern; the pattern starts with -, hence -e. A grep error (exit code 2) must also fail CI, to avoid a false green.
           set +e
           grep -rIEl --exclude-dir=.git --exclude-dir=tests --exclude=fileops.py --exclude=test.yml \
             -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' -e 'PuTTY-User-Key-File' .
           rc=$?
-          if [ $rc -eq 0 ]; then echo "发现疑似私钥/令牌文件，见上方列表"; exit 1; fi
-          if [ $rc -ne 1 ]; then echo "扫描命令自身出错 (rc=$rc)"; exit 1; fi
+          if [ $rc -eq 0 ]; then echo "Suspected private-key/token files found, see the list above"; exit 1; fi
+          if [ $rc -ne 1 ]; then echo "The scan command itself failed (rc=$rc)"; exit 1; fi

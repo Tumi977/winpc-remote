@@ -1,5 +1,5 @@
-"""实机发现的 ECONNRESET：uvicorn 默认只保持空闲连接 5 秒，客户端在一段空闲（模型思考）后复用已被服务器关闭的连接，
-第一次调用就会 ECONNRESET。Agent 必须用足够长的 keep-alive。"""
+"""ECONNRESET found on a real machine: uvicorn keeps idle connections for only 5 seconds by default; after an idle period (the model thinking) the client reuses a connection the server has already closed,
+and the first call fails with ECONNRESET. The Agent must use a long enough keep-alive."""
 import http.client
 import socket
 import threading
@@ -11,7 +11,7 @@ import uvicorn
 from backends import FakeBackend
 from winpc_agent import KEEPALIVE_S, Config, create_app, uvicorn_config
 
-IDLE = 6.5      # 大于 uvicorn 默认的 5 秒
+IDLE = 6.5      # longer than uvicorn's default of 5 seconds
 
 
 def start(make_config):
@@ -31,7 +31,7 @@ def start(make_config):
 
 
 def reuse_after_idle(port):
-    """同一条 TCP 连接上先后发两个请求，中间空闲 IDLE 秒。"""
+    """Send two requests one after the other on the same TCP connection, idle for IDLE seconds in between."""
     c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     c.request("GET", "/mcp")
     assert c.getresponse().read() is not None
@@ -44,14 +44,14 @@ def test_agent_keeps_idle_connections_open_longer_than_uvicorn_default():
     assert KEEPALIVE_S >= 60
     port, srv, t = start(uvicorn_config)
     try:
-        assert reuse_after_idle(port) == 401          # 复用成功（无令牌 → 401 说明请求确实到了应用）
+        assert reuse_after_idle(port) == 401          # reuse succeeded (no token -> 401 shows the request really reached the app)
     finally:
         srv.should_exit = True
         t.join(timeout=10)
 
 
 def test_control_uvicorn_default_really_does_drop_the_idle_connection():
-    """对照组：证明这个测试能检出问题——uvicorn 默认配置在空闲 6.5 秒后会断开连接。"""
+    """Control group: proves this test can detect the problem; with the uvicorn default config the connection is dropped after 6.5 s idle."""
     port, srv, t = start(lambda app, cfg: uvicorn.Config(app, host="127.0.0.1", port=cfg.port, log_level="warning"))
     try:
         with pytest.raises((http.client.RemoteDisconnected, ConnectionError, BrokenPipeError, socket.timeout, OSError)):

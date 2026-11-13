@@ -1,13 +1,13 @@
 ﻿<#
 .SYNOPSIS
-  一键启动/停止 WinPC Remote（Agent + SSH 反向隧道，各开一个窗口）。
+  Start/stop WinPC Remote with one command (Agent + SSH reverse tunnel, each in its own window).
 .DESCRIPTION
-  服务器连接信息读取同目录的 win-remote.config.json（已在 .gitignore 中，不会被提交）。
-  首次使用：复制 win-remote.config.example.json 为 win-remote.config.json 并填写。
+  The server connection details are read from win-remote.config.json in the same directory (it is in .gitignore and will not be committed).
+  First use: copy win-remote.config.example.json to win-remote.config.json and fill it in.
 .EXAMPLE
-  win-remote.ps1 on       # 普通模式：未授权应用首次操作会弹确认框
-  win-remote.ps1 bypass   # 跳过应用授权确认（黑名单与敏感路径拦截仍生效）
-  win-remote.ps1 off      # 停止 Agent 和隧道
+  win-remote.ps1 on       # normal mode: the first operation on an unapproved app shows a confirmation dialog
+  win-remote.ps1 bypass   # skip application approval prompts (the block-list and sensitive-path blocking still apply)
+  win-remote.ps1 off      # stop the Agent and the tunnel
 #>
 param(
     [Parameter(Mandatory)][ValidateSet('on', 'bypass', 'off')][string]$Mode
@@ -15,7 +15,7 @@ param(
 $ErrorActionPreference = 'Stop'
 if (-not $PSScriptRoot) { $PSScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
 
-# 读取连接信息（off 模式不需要）
+# Read the connection details (not needed in off mode)
 $cfgPath = Join-Path $PSScriptRoot 'win-remote.config.json'
 $Port = 8765
 $conn = $null
@@ -24,11 +24,11 @@ if (Test-Path $cfgPath) {
     if ($conn.port) { $Port = [int]$conn.port }
 }
 elseif ($Mode -ne 'off') {
-    throw "找不到 $cfgPath。请复制 win-remote.config.example.json 为 win-remote.config.json 并填写 server / user / key_file。"
+    throw "Cannot find $cfgPath. Copy win-remote.config.example.json to win-remote.config.json and fill in server / user / key_file."
 }
 
 function Stop-WinRemote {
-    # 先停外层 PowerShell 循环（否则隧道会 5 秒后重连），再停 python / ssh
+    # Stop the outer PowerShell loops first (otherwise the tunnel would reconnect after 5 s), then stop python / ssh
     $procs = Get-CimInstance Win32_Process | Where-Object {
         $_.ProcessId -ne $PID -and $_.CommandLine -and (
             ($_.Name -match '^powershell' -and $_.CommandLine -match 'start-(agent|tunnel)\.ps1') -or
@@ -44,13 +44,13 @@ function Stop-WinRemote {
 
 $n = Stop-WinRemote
 if ($Mode -eq 'off') {
-    Write-Host "已停止 WinPC Remote（结束 $n 个进程）。"
+    Write-Host "Stopped WinPC Remote ($n process(es) ended)."
     return
 }
 foreach ($k in 'server', 'user') {
-    if (-not $conn.$k) { throw "win-remote.config.json 缺少字段: $k" }
+    if (-not $conn.$k) { throw "win-remote.config.json is missing the field: $k" }
 }
-if ($n -gt 0) { Write-Host "已停止旧的 Agent/隧道（$n 个进程）。"; Start-Sleep -Seconds 1 }
+if ($n -gt 0) { Write-Host "Stopped the old Agent/tunnel ($n process(es))."; Start-Sleep -Seconds 1 }
 
 $agentArgs = @('-NoExit', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'start-agent.ps1'))
 if ($Mode -eq 'bypass') { $agentArgs += '-BypassPermissions' }
@@ -62,6 +62,6 @@ if ($conn.key_file) { $tunnelArgs += @('-KeyFile', $conn.key_file) }
 if ($conn.ssh_port) { $tunnelArgs += @('-SshPort', [int]$conn.ssh_port) }
 Start-Process powershell -ArgumentList $tunnelArgs -WorkingDirectory $PSScriptRoot
 
-$label = if ($Mode -eq 'bypass') { 'bypass（跳过授权确认）' } else { '普通（未授权应用会弹确认框）' }
-Write-Host "已启动 Agent 和隧道，模式：$label。两个新窗口请保持打开。"
-Write-Host "停止：win-remote-off"
+$label = if ($Mode -eq 'bypass') { 'bypass (approval prompts skipped)' } else { 'normal (unapproved apps show a confirmation dialog)' }
+Write-Host "Started the Agent and the tunnel, mode: $label. Keep the two new windows open."
+Write-Host "To stop: win-remote-off"

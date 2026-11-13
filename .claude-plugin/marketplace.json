@@ -3,12 +3,12 @@
   "owner": {
     "name": "WinPC Remote contributors"
   },
-  "description": "WinPC Remote：让远程 Linux 上的 Claude Code 通过截屏 + 键鼠操作本地 Windows 电脑",
+  "description": "WinPC Remote: lets Claude Code on a remote Linux machine operate a local Windows PC through screenshots + keyboard/mouse",
   "plugins": [
     {
       "name": "winpc",
       "source": "./claude-plugin/winpc",
-      "description": "通过 winpc MCP 服务器（连续截屏 + 键鼠 + 文件读写）远程操作本地 Windows 电脑"
+      "description": "Operate a local Windows PC remotely through the winpc MCP server (continuous screenshots + keyboard/mouse + file read/write)"
     }
   ]
 }

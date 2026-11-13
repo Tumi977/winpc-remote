@@ -1,4 +1,4 @@
-# 本地配置与凭据 —— 绝不能提交
+# Local config and credentials -- must never be committed
 windows-agent/config.json
 windows-agent/win-remote.config.json
 *.key
@@ -8,7 +8,7 @@ id_ed25519*
 .env
 .env.*
 
-# 运行产物
+# Run artifacts
 windows-agent/logs/
 windows-agent/.venv/
 .venv/
@@ -16,7 +16,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# 编辑器 / 系统
+# Editors / OS
 .vscode/
 .idea/
 .DS_Store

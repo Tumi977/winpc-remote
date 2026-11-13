@@ -1,4 +1,4 @@
-"""单元测试：坐标换算、按键解析、授权策略、暂停、审计。全部使用 FakeBackend，无需 Windows。"""
+"""Unit tests: coordinate conversion, key parsing, authorization policy, pause, audit. All use FakeBackend; no Windows needed."""
 import json
 
 import pytest
@@ -18,7 +18,7 @@ def text_of(result):
     return result.content[0].text
 
 
-# ----------------------------- 坐标换算 ----------------------------- #
+# ----------------------------- coordinate conversion ----------------------------- #
 def test_scale_2560x1440():
     s = compute_scale(2560, 1440, 1280)
     assert s == 0.5
@@ -59,9 +59,9 @@ async def test_click_uses_last_screenshot_monitor(tmp_path):
     r = await agent.click(640, 360, screenshot_after=False)
     assert not r.is_error, text_of(r)
     assert (fb.actions[-1]["x"], fb.actions[-1]["y"]) == (-1920 + 960, 540)
-    # 之后不带 monitor 的 screenshot 沿用上次的显示器
+    # later screenshots without monitor reuse the last monitor
     r = await agent.screenshot()
-    assert "显示器 2" in text_of(r)
+    assert "monitor 2" in text_of(r)
 
 
 async def test_invalid_monitor(tmp_path):
@@ -70,7 +70,7 @@ async def test_invalid_monitor(tmp_path):
     assert r.is_error
 
 
-# ----------------------------- 按键解析 ----------------------------- #
+# ----------------------------- key parsing ----------------------------- #
 def test_parse_keys():
     assert parse_keys("Ctrl+Shift+Esc") == ["ctrl", "shift", "escape"]
     assert parse_keys("return") == ["enter"]
@@ -96,18 +96,18 @@ def test_parse_modifiers():
         parse_modifiers("ctrl+a")
 
 
-# ----------------------------- 授权策略 ----------------------------- #
+# ----------------------------- authorization policy ----------------------------- #
 async def test_blocked_app_denied_even_if_allowlisted(tmp_path):
     agent, fb = make_agent(tmp_path, allowed_apps=["keepass.exe"], approval_mode="all")
     fb.foreground_process = "KeePass.exe"
     await agent.screenshot()
     r = await agent.click(10, 10, screenshot_after=False)
-    assert r.is_error and "黑名单" in text_of(r)
+    assert r.is_error and "block-list" in text_of(r)
     assert fb.actions == [] and fb.confirm_calls == []
 
 
 async def test_allowlisted_app_passes_without_prompt(tmp_path):
-    agent, fb = make_agent(tmp_path)  # 默认白名单 notepad.exe
+    agent, fb = make_agent(tmp_path)  # default allowlist: notepad.exe
     await agent.screenshot()
     r = await agent.click(10, 10, screenshot_after=False)
     assert not r.is_error and fb.confirm_calls == []
@@ -121,7 +121,7 @@ async def test_prompt_approved_then_remembered(tmp_path):
     assert not (await agent.click(10, 10, screenshot_after=False)).is_error
     assert len(fb.confirm_calls) == 1 and "chrome.exe" in fb.confirm_calls[0][1]
     assert not (await agent.press_key("a", screenshot_after=False)).is_error
-    assert len(fb.confirm_calls) == 1  # 第二次不再询问
+    assert len(fb.confirm_calls) == 1  # not asked a second time
     assert "chrome.exe" in agent.session_approved
 
 
@@ -131,9 +131,9 @@ async def test_prompt_denied(tmp_path):
     fb.confirm_result = False
     await agent.screenshot()
     r = await agent.click(10, 10, screenshot_after=False)
-    assert r.is_error and "拒绝" in text_of(r)
+    assert r.is_error and "denied" in text_of(r)
     assert fb.actions == [] and agent.session_approved == set()
-    r = await agent.type_text("hi", screenshot_after=False)  # 仍会再次询问
+    r = await agent.type_text("hi", screenshot_after=False)  # asks again
     assert r.is_error and len(fb.confirm_calls) == 2
 
 
@@ -142,7 +142,7 @@ async def test_allowlist_mode_rejects_without_prompt(tmp_path):
     fb.foreground_process = "chrome.exe"
     await agent.screenshot()
     r = await agent.click(10, 10, screenshot_after=False)
-    assert r.is_error and "白名单" in text_of(r)
+    assert r.is_error and "allowlist" in text_of(r)
     assert fb.confirm_calls == [] and fb.actions == []
 
 
@@ -156,11 +156,11 @@ async def test_all_mode_allows_everything_but_blocked(tmp_path):
 
 async def test_pointer_actions_check_window_under_pointer(tmp_path):
     agent, fb = make_agent(tmp_path, approval_mode="allowlist")
-    fb.foreground_process = "notepad.exe"   # 前台是记事本
-    fb.point_process = "1password.exe"      # 但坐标下是黑名单应用
+    fb.foreground_process = "notepad.exe"   # the foreground is Notepad
+    fb.point_process = "1password.exe"      # but the app under the coordinates is on the block-list
     await agent.screenshot()
     r = await agent.click(10, 10, screenshot_after=False)
-    assert r.is_error and "黑名单" in text_of(r)
+    assert r.is_error and "block-list" in text_of(r)
 
 
 async def test_elevated_window_gives_uipi_error(tmp_path):
@@ -168,11 +168,11 @@ async def test_elevated_window_gives_uipi_error(tmp_path):
     fb.elevated_processes = {"notepad.exe"}
     await agent.screenshot()
     r = await agent.click(10, 10, screenshot_after=False)
-    assert r.is_error and "管理员" in text_of(r)
+    assert r.is_error and "administrator" in text_of(r)
 
 
 async def test_focus_window_is_authorized(tmp_path):
-    agent, fb = make_agent(tmp_path)  # prompt 模式，chrome 不在白名单
+    agent, fb = make_agent(tmp_path)  # prompt mode, chrome is not in the allowlist
     fb.confirm_result = False
     r = await agent.focus_window(1002)
     assert r.is_error and fb.confirm_calls
@@ -182,28 +182,28 @@ async def test_focus_window_is_authorized(tmp_path):
     assert (await agent.focus_window(9999)).is_error
 
 
-# ----------------------------- 暂停 ----------------------------- #
+# ----------------------------- pause ----------------------------- #
 async def test_failsafe_pauses_input_tools_but_not_screenshot(tmp_path):
     agent, fb = make_agent(tmp_path)
     await agent.screenshot()
     fb.failsafe_armed = True
     r = await agent.click(10, 10)
-    assert r.is_error and "暂停" in text_of(r) and agent.paused
+    assert r.is_error and "Paused" in text_of(r) and agent.paused
     n = len(fb.actions)
     for call in (agent.click(1, 1), agent.type_text("x"), agent.press_key("a"),
                  agent.scroll(1, 1), agent.drag(1, 1, 2, 2), agent.move_mouse(1, 1)):
         r = await call
-        assert r.is_error and "暂停" in text_of(r)
+        assert r.is_error and "Paused" in text_of(r)
     assert len(fb.actions) == n
     assert not (await agent.screenshot()).is_error
     assert not (await agent.get_status()).is_error
-    assert "暂停" in text_of(await agent.get_status())
+    assert "Paused" in text_of(await agent.get_status())
 
 
-# ----------------------------- 审计 ----------------------------- #
+# ----------------------------- audit ----------------------------- #
 async def test_audit_does_not_log_full_text(tmp_path):
     agent, fb = make_agent(tmp_path)
-    secret = "这是一段很长很长的文本，" + "X" * 100 + "SECRET_TAIL"
+    secret = "\u8fd9\u662f\u4e00\u6bb5\u5f88\u957f\u5f88\u957f\u7684\u6587\u672c\uff0c" + "X" * 100 + "SECRET_TAIL"
     await agent.type_text(secret, screenshot_after=False)
     lines = [json.loads(l) for l in (tmp_path / "logs" / "actions.jsonl").read_text("utf-8").splitlines()]
     entry = lines[-1]
@@ -212,7 +212,7 @@ async def test_audit_does_not_log_full_text(tmp_path):
     assert entry["params"]["text_head"] == secret[:20]
     assert "text" not in entry["params"]
     assert "SECRET_TAIL" not in json.dumps(entry, ensure_ascii=False)
-    assert fb.actions[-1]["text"] == secret  # 但真实输入是完整的
+    assert fb.actions[-1]["text"] == secret  # but the real input is complete
 
 
 async def test_audit_saves_screenshots_when_enabled(tmp_path):
@@ -221,12 +221,12 @@ async def test_audit_saves_screenshots_when_enabled(tmp_path):
     assert list((tmp_path / "logs" / "screenshots").glob("*.jpg"))
 
 
-# ----------------------------- 其他 ----------------------------- #
+# ----------------------------- other ----------------------------- #
 async def test_black_screen_hint(tmp_path):
     agent, fb = make_agent(tmp_path)
     fb.black = True
-    assert "锁定" in text_of(await agent.screenshot())
-    assert "锁定" in text_of(await agent.get_status())
+    assert "locked" in text_of(await agent.screenshot())
+    assert "locked" in text_of(await agent.get_status())
 
 
 async def test_zoom_keeps_coordinate_system(tmp_path):

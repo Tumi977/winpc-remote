@@ -1,7 +1,7 @@
-"""文件读写：路径策略与读/列/写/改的实现。
+"""File read/write: path policy and the implementation of read / list / write / edit.
 
-只做本地文件操作，不依赖 Windows API，Linux 上也能测试。授权（确认框、会话记忆、暂停）在
-winpc_agent.py 里做；这里负责：路径解析与敏感路径拦截、编码与换行保持、原子写入、覆盖前备份。
+Local file operations only; no dependency on Windows APIs, so it can also be tested on Linux. Authorization (dialogs, session memory, pause) is done in
+winpc_agent.py; this module handles: path resolution and sensitive-path blocking, encoding and newline preservation, atomic writes, backup before overwrite.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 class FileError(Exception):
-    """可直接展示给模型的错误。"""
+    """An error message that can be shown directly to the model."""
 
 
 MAX_FILE_BYTES = 20 * 1024 * 1024
@@ -27,19 +27,19 @@ MAX_READ_CHARS = 100_000
 MAX_WRITE_CHARS = 1_000_000
 MAX_LIST_ENTRIES = 1000
 MAX_LIST_DEPTH = 4
-# 二进制传输（get_file / put_file / stat_file）
-MAX_CHUNK_BYTES = 2 * 1024 * 1024          # 单次调用的原始字节上限（base64 后约 2.7MB，低于 HTTP 请求体 4MiB 上限）
+# Binary transfer (get_file / put_file / stat_file)
+MAX_CHUNK_BYTES = 2 * 1024 * 1024          # upper limit of raw bytes per call (about 2.7 MB after base64, below the 4 MiB HTTP request body limit)
 DEFAULT_CHUNK_BYTES = 1024 * 1024
 DEFAULT_TRANSFER_MAX_BYTES = 512 * 1024 * 1024
 
-# 中文 Windows 常把桌面/文档重定向到 OneDrive，所以两种都列上；不存在的目录无副作用。
+# Chinese-locale Windows often redirects Desktop/Documents to OneDrive, so both are listed; a directory that does not exist has no side effects.
 DEFAULT_ROOTS = ["~/Desktop", "~/Documents", "~/OneDrive/Desktop", "~/OneDrive/Documents"]
-# 写入这些扩展名会留下可自动执行的内容，默认拒绝（可在 config.json 的 file_blocked_write_ext 调整）
+# Writing these extensions leaves auto-executable content behind, so it is refused by default (adjustable via file_blocked_write_ext in config.json)
 DEFAULT_BLOCKED_WRITE_EXT = [".exe", ".dll", ".sys", ".scr", ".msi", ".com", ".bat", ".cmd", ".ps1", ".psm1",
                              ".vbs", ".vbe", ".wsf", ".hta", ".lnk", ".reg",
                              ".jse", ".wsh", ".pif", ".cpl", ".msc", ".url", ".scf", ".appref-ms", ".application"]
 
-# 敏感路径（读写都拒绝，任何授权模式都生效）。小写、正斜杠，按子串匹配。
+# Sensitive paths (refused for read and write, in every approval mode). Lowercase, forward slashes, matched as substrings.
 _BLOCKED_SUBSTR = [
     "/.ssh/", "/.aws/", "/.gnupg/", "/.azure/", "/.kube/",
     "/appdata/roaming/microsoft/credentials", "/appdata/local/microsoft/credentials",
@@ -49,13 +49,13 @@ _BLOCKED_SUBSTR = [
     "/start menu/programs/startup",
     "/.docker/", "/.config/gh/", "/.config/gcloud/", "/.claude/",
     "/appdata/local/bravesoftware/", "/appdata/roaming/opera software/", "/appdata/local/vivaldi/",
-    "/appdata/roaming/microsoft/windows/powershell/psreadline",   # PowerShell 命令历史，常含令牌
+    "/appdata/roaming/microsoft/windows/powershell/psreadline",   # PowerShell command history, often contains tokens
 ]
 _BLOCKED_SUFFIX = (".kdbx", ".kdb", ".pfx", ".p12", ".ppk")
 _BLOCKED_NAME_PREFIX = ("id_rsa", "id_ed25519", "id_ecdsa", "id_dsa")
 _BLOCKED_NAMES = {"ntuser.dat", ".env", ".netrc", "_netrc", ".npmrc", ".pypirc", ".git-credentials",
                   "credentials.json", ".credentials.json"}
-# 按内容识别私钥：用户的私钥常放在非常规位置、文件名也不像 id_rsa（例如 C:/Users/me/ssh/myserver）
+# Detect private keys by content: users often keep them in unusual places under names that do not look like id_rsa (e.g. C:/Users/me/ssh/myserver)
 _SECRET_CONTENT = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|PuTTY-User-Key-File-\d")
 
 
@@ -73,17 +73,17 @@ def _oserr(fn):
         try:
             return fn(*a, **k)
         except OSError as e:
-            raise FileError(f"文件系统错误: {e.strerror or e}（{type(e).__name__}）") from e
+            raise FileError(f"File system error: {e.strerror or e} ({type(e).__name__})") from e
     return wrapper
 
 
 # --------------------------------------------------------------------------- #
-# 路径策略
+# Path policy
 # --------------------------------------------------------------------------- #
 @dataclass
 class PathPolicy:
-    roots: list[str]               # file_roots 解析后的真实路径（用于展示）
-    blocked_dirs: list[str]        # 归一化后的目录前缀：Agent 自身目录、日志目录
+    roots: list[str]               # resolved real paths of file_roots (for display)
+    blocked_dirs: list[str]        # normalized directory prefixes: the Agent's own directory, the log directory
     blocked_substr: list[str]
     blocked_write_ext: frozenset[str]
 
@@ -105,43 +105,43 @@ class PathPolicy:
         )
 
     def resolve(self, raw: str) -> Path:
-        """把模型给的路径变成真实绝对路径（解析符号链接/联接点），拒绝 UNC、备用数据流等。"""
+        """Turn the path given by the model into a real absolute path (resolving symlinks/junctions); reject UNC, alternate data streams, etc."""
         s = raw or ""
         if not s.strip():
-            raise FileError("path 为空")
+            raise FileError("path is empty")
         if s.startswith(("\\\\", "//")):
-            raise FileError("不支持网络路径（UNC）或设备路径。")
+            raise FileError("Network paths (UNC) and device paths are not supported.")
         p = os.path.expanduser(s)
         if not os.path.isabs(p):
-            raise FileError("path 必须是绝对路径（可以用 ~ 表示用户主目录）。")
+            raise FileError("path must be absolute (~ may be used for the user's home directory).")
         _drive, rest = os.path.splitdrive(p)
         if ":" in rest:
-            raise FileError("路径里不能包含 ':'（NTFS 备用数据流）。")
+            raise FileError("A path must not contain ':' (NTFS alternate data streams).")
         for part in rest.replace("\\", "/").split("/"):
             if part not in ("", ".", "..") and part != part.rstrip(". "):
-                raise FileError("路径各段不能以空格或点结尾（Windows 会悄悄去掉它们）。")
+                raise FileError("Path components must not end with a space or a dot (Windows silently strips them).")
         return Path(os.path.realpath(p))
 
     def classify(self, p: Path, write: bool) -> bool:
-        """敏感路径直接抛 FileError；返回 True 表示在 file_roots 内。"""
+        """Sensitive paths raise FileError directly; returns True if the path is inside file_roots."""
         n = _norm(p)
         for d in self.blocked_dirs:
             if _is_within(n, d):
-                raise FileError("该路径在 Agent 自身目录（程序、配置、令牌、日志、备份）内，禁止访问。")
+                raise FileError("This path is inside the Agent's own directory (program, config, token, logs, backups); access is forbidden.")
         padded = n + "/"
         name = p.name.lower()
         if (any(sub in padded for sub in self.blocked_substr)
                 or name.startswith(_BLOCKED_NAME_PREFIX) or name in _BLOCKED_NAMES
                 or name.endswith(_BLOCKED_SUFFIX)):
-            raise FileError("该路径属于敏感位置（密钥、凭据、密码库、浏览器数据、启动项等），禁止访问。不要绕过，请告诉用户。")
+            raise FileError("This path is a sensitive location (keys, credentials, password vaults, browser data, startup items, etc.); access is forbidden. Do not work around this; tell the user.")
         if write and p.suffix.lower() in self.blocked_write_ext:
-            raise FileError(f"不允许写入 {p.suffix} 类型的文件（可自动执行的内容）。"
-                            "如确需，让用户调整 config.json 的 file_blocked_write_ext。")
+            raise FileError(f"Writing files of type {p.suffix} is not allowed (auto-executable content). "
+                            "If really needed, ask the user to adjust file_blocked_write_ext in config.json.")
         return any(_is_within(n, _norm(r)) for r in self.roots)
 
 
 # --------------------------------------------------------------------------- #
-# 编码 / 换行
+# Encoding / newlines
 # --------------------------------------------------------------------------- #
 def _decode(data: bytes) -> tuple[str, str]:
     if data.startswith(b"\xef\xbb\xbf"):
@@ -150,32 +150,32 @@ def _decode(data: bytes) -> tuple[str, str]:
         try:
             return data.decode("utf-16"), "utf-16"
         except UnicodeDecodeError as e:
-            raise FileError("UTF-16 文件解码失败。") from e
+            raise FileError("Failed to decode the UTF-16 file.") from e
     if b"\x00" in data[:8192]:
-        raise FileError("看起来是二进制文件（含 NUL 字节），不支持文本读写。")
+        raise FileError("This looks like a binary file (contains NUL bytes); text read/write is not supported.")
     try:
         return data.decode("utf-8"), "utf-8"
     except UnicodeDecodeError:
         pass
     try:
-        return data.decode("gb18030"), "gb18030"  # 中文 Windows 旧文本文件常见编码（GBK 的超集）
+        return data.decode("gb18030"), "gb18030"  # common encoding of old text files on Chinese Windows (a superset of GBK)
     except UnicodeDecodeError as e:
-        raise FileError("无法按 UTF-8 / GB18030 解码，可能是二进制文件。") from e
+        raise FileError("Cannot decode as UTF-8 / GB18030; it may be a binary file.") from e
 
 
 def _load(p: Path) -> tuple[str, str, str]:
-    """返回 (换行已归一为 \\n 的文本, 编码, 原换行风格 'CRLF'/'LF')。"""
+    """Return (text with newlines normalized to \n, encoding, original newline style 'CRLF'/'LF')."""
     if p.stat().st_size > MAX_FILE_BYTES:
-        raise FileError(f"文件超过 {MAX_FILE_BYTES // 1024 // 1024} MB，不支持。")
+        raise FileError(f"The file is larger than {MAX_FILE_BYTES // 1024 // 1024} MB; not supported.")
     text, enc = _decode(p.read_bytes())
     if _SECRET_CONTENT.search(text[:16384]):
-        raise FileError("该文件内容看起来是私钥（BEGIN … PRIVATE KEY），禁止读取或修改。不要绕过，请告诉用户。")
+        raise FileError("This file looks like a private key (BEGIN ... PRIVATE KEY); reading or modifying it is forbidden. Do not work around this; tell the user.")
     eol = "CRLF" if "\r\n" in text else "LF"
     return text.replace("\r\n", "\n"), enc, eol
 
 
 def _atomic_write(p: Path, data: bytes) -> None:
-    """同目录临时文件 + os.replace，写到一半失败不会留下半截文件。"""
+    """Temp file in the same directory + os.replace; a failure halfway never leaves a half-written file."""
     fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".winpc-", suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as f:
@@ -203,31 +203,31 @@ def _backup(p: Path, backup_dir: Path) -> Path:
 
 def _need_file(p: Path) -> None:
     if not p.exists():
-        raise FileError(f"文件不存在: {p}")
+        raise FileError(f"File does not exist: {p}")
     if p.is_dir():
-        raise FileError(f"{p} 是目录，请用 list_files。")
+        raise FileError(f"{p} is a directory; use list_files.")
 
 
 # --------------------------------------------------------------------------- #
-# 工具实现
+# Tool implementations
 # --------------------------------------------------------------------------- #
 @_oserr
 def read_text(p: Path, offset: int = 0, max_chars: int = DEFAULT_READ_CHARS) -> str:
     _need_file(p)
     if offset < 0:
-        raise FileError("offset 不能为负数")
+        raise FileError("offset must not be negative")
     if not 1 <= max_chars <= MAX_READ_CHARS:
-        raise FileError(f"max_chars 必须在 1..{MAX_READ_CHARS}")
+        raise FileError(f"max_chars must be in 1..{MAX_READ_CHARS}")
     text, enc, eol = _load(p)
     total = len(text)
     if total and offset >= total:
-        raise FileError(f"offset={offset} 超出文件长度 {total}")
+        raise FileError(f"offset={offset} is beyond the file length {total}")
     chunk = text[offset:offset + max_chars]
     end = offset + len(chunk)
     lines = text.count("\n") + (1 if text and not text.endswith("\n") else 0)
-    head = f"文件 {p}｜编码 {enc}｜换行 {eol}｜共 {total} 字符 {lines} 行｜本次显示字符 {offset}–{end}"
+    head = f"File {p} | encoding {enc} | newlines {eol} | {total} characters, {lines} lines | showing characters {offset}-{end}"
     if end < total:
-        head += f"｜未读完，继续请用 offset={end}"
+        head += f" | not fully read; continue with offset={end}"
     return head + "\n---\n" + chunk
 
 
@@ -235,11 +235,11 @@ def read_text(p: Path, offset: int = 0, max_chars: int = DEFAULT_READ_CHARS) -> 
 def list_dir(p: Path, policy: PathPolicy, pattern: str | None = None, recursive: bool = False,
              max_entries: int = 200) -> str:
     if not p.exists():
-        raise FileError(f"目录不存在: {p}")
+        raise FileError(f"Directory does not exist: {p}")
     if not p.is_dir():
-        raise FileError(f"{p} 不是目录，请用 read_file。")
+        raise FileError(f"{p} is not a directory; use read_file.")
     if not 1 <= max_entries <= MAX_LIST_ENTRIES:
-        raise FileError(f"max_entries 必须在 1..{MAX_LIST_ENTRIES}")
+        raise FileError(f"max_entries must be in 1..{MAX_LIST_ENTRIES}")
 
     def visible(path: str) -> bool:
         try:
@@ -257,14 +257,14 @@ def list_dir(p: Path, policy: PathPolicy, pattern: str | None = None, recursive:
             with os.scandir(d) as it:
                 entries = sorted(it, key=lambda e: (not e.is_dir(follow_symlinks=False), e.name.lower()))
         except PermissionError:
-            rows.append(f"[无权限] {os.path.relpath(d, p)}/")
+            rows.append(f"[no permission] {os.path.relpath(d, p)}/")
             continue
         for e in entries:
             if not visible(e.path):
                 continue
             is_dir = e.is_dir(follow_symlinks=False)
             if recursive and is_dir and depth + 1 < MAX_LIST_DEPTH \
-                    and _norm(os.path.realpath(e.path)) == _norm(os.path.abspath(e.path)):  # 不进入链接/联接点
+                    and _norm(os.path.realpath(e.path)) == _norm(os.path.abspath(e.path)):  # do not descend into links/junctions
                 queue.append((e.path, depth + 1))
             if pattern and not fnmatch.fnmatch(e.name.lower(), pattern.lower()):
                 continue
@@ -274,31 +274,31 @@ def list_dir(p: Path, policy: PathPolicy, pattern: str | None = None, recursive:
             rel = os.path.relpath(e.path, p).replace("\\", "/")
             try:
                 st = e.stat(follow_symlinks=False)
-                meta = f"{st.st_size} 字节  " if not is_dir else ""
+                meta = f"{st.st_size} bytes  " if not is_dir else ""
                 meta += datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M")
             except OSError:
                 meta = "?"
-            rows.append(f"{'[目录]' if is_dir else '[文件]'} {rel}{'/' if is_dir else ''}  {meta}")
-    head = f"{p} 下显示 {len(rows)} 项" + (f"（已达 max_entries={max_entries}，结果被截断）" if truncated else "")
+            rows.append(f"{'[dir]' if is_dir else '[file]'} {rel}{'/' if is_dir else ''}  {meta}")
+    head = f"{len(rows)} entries shown under {p}" + (f" (max_entries={max_entries} reached, results truncated)" if truncated else "")
     if recursive:
-        head += f"，递归深度上限 {MAX_LIST_DEPTH}"
-    return head + ("\n" + "\n".join(rows) if rows else "（空）")
+        head += f", recursion depth limit {MAX_LIST_DEPTH}"
+    return head + ("\n" + "\n".join(rows) if rows else " (empty)")
 
 
 @_oserr
 def write_text(p: Path, content: str, mode: str, backup_dir: Path, create_dirs: bool = False) -> str:
     if mode not in ("create", "overwrite", "append"):
-        raise FileError("mode 只能是 create / overwrite / append")
+        raise FileError("mode must be create / overwrite / append")
     if len(content) > MAX_WRITE_CHARS:
-        raise FileError(f"content 过长（上限 {MAX_WRITE_CHARS} 字符），请分段写入（先 create，再 append）。")
+        raise FileError(f"content is too long (limit {MAX_WRITE_CHARS} characters); write it in several parts (create first, then append).")
     if p.is_dir():
-        raise FileError(f"{p} 是目录")
+        raise FileError(f"{p} is a directory")
     exists = p.exists()
     if mode == "create" and exists:
-        raise FileError("文件已存在。覆盖请用 mode='overwrite'，追加用 mode='append'；改局部内容用 edit_file。")
+        raise FileError("The file already exists. Use mode='overwrite' to replace it or mode='append' to append; use edit_file to change part of it.")
     if not p.parent.is_dir():
         if not create_dirs:
-            raise FileError(f"目录不存在: {p.parent}（需要的话设置 create_dirs=true）")
+            raise FileError(f"Directory does not exist: {p.parent} (set create_dirs=true if needed)")
         p.parent.mkdir(parents=True)
 
     enc, eol, old = "utf-8", "LF", ""
@@ -309,13 +309,13 @@ def write_text(p: Path, content: str, mode: str, backup_dir: Path, create_dirs: 
     if exists and eol == "CRLF":
         new_text = new_text.replace("\n", "\r\n")
     elif not exists:
-        new_text = content  # 新文件：按给定内容原样写入
+        new_text = content  # new file: write the given content as-is
     note = ""
     if exists:
-        note = f"，原文件已备份到 {_backup(p, backup_dir)}"
+        note = f", the original file was backed up to {_backup(p, backup_dir)}"
     _atomic_write(p, new_text.encode(enc))
-    verb = {"create": "已创建", "overwrite": "已覆盖" if exists else "已创建", "append": "已追加到"}[mode]
-    return f"{verb} {p}（写入 {len(content)} 字符，编码 {enc}{'，换行 CRLF' if eol == 'CRLF' and exists else ''}）{note}。"
+    verb = {"create": "Created", "overwrite": "Overwrote" if exists else "Created", "append": "Appended to"}[mode]
+    return f"{verb} {p} ({len(content)} characters written, encoding {enc}{', newlines CRLF' if eol == 'CRLF' and exists else ''}){note}."
 
 
 @_oserr
@@ -324,18 +324,18 @@ def edit_text(p: Path, old: str, new: str, replace_all: bool, backup_dir: Path) 
     text, enc, eol = _load(p)
     old, new = old.replace("\r\n", "\n"), new.replace("\r\n", "\n")
     if not old:
-        raise FileError("old_string 不能为空（新建/整体写入请用 write_file）。")
+        raise FileError("old_string must not be empty (use write_file to create a file or write it whole).")
     if old == new:
-        raise FileError("old_string 与 new_string 相同，没有可修改的内容。")
+        raise FileError("old_string and new_string are identical; there is nothing to change.")
     count = text.count(old)
     if count == 0:
-        raise FileError("没有找到 old_string。必须逐字匹配（含空格、缩进、换行）；请先 read_file 确认当前内容。")
+        raise FileError("old_string was not found. It must match verbatim (spaces, indentation, newlines); read_file first to confirm the current content.")
     if count > 1 and not replace_all:
-        raise FileError(f"old_string 出现了 {count} 次，不唯一。请带上更多上下文使其唯一，或设置 replace_all=true。")
+        raise FileError(f"old_string occurs {count} times, so it is not unique. Include more context to make it unique, or set replace_all=true.")
     first = text.index(old)
     result = text.replace(old, new) if replace_all else text.replace(old, new, 1)
     if len(result) > MAX_FILE_BYTES:
-        raise FileError("修改后文件过大。")
+        raise FileError("The file would be too large after the edit.")
     backup = _backup(p, backup_dir)
     _atomic_write(p, (result.replace("\n", "\r\n") if eol == "CRLF" else result).encode(enc))
 
@@ -343,24 +343,24 @@ def edit_text(p: Path, old: str, new: str, replace_all: bool, backup_dir: Path) 
     lines = result.split("\n")
     lo, hi = max(0, line_no - 1 - 2), min(len(lines), line_no - 1 + new.count("\n") + 1 + 2)
     snippet = "\n".join(f"{i + 1:>5}| {lines[i]}" for i in range(lo, min(hi, lo + 20)))
-    return (f"已修改 {p}：替换 {count if replace_all else 1} 处（第 {line_no} 行起），编码 {enc}，换行 {eol}。"
-            f"原文件已备份到 {backup}。\n修改后的上下文：\n{snippet[:2000]}")
+    return (f"Edited {p}: replaced {count if replace_all else 1} occurrence(s) (starting at line {line_no}), encoding {enc}, newlines {eol}. "
+            f"The original file was backed up to {backup}.\nContext after the edit:\n{snippet[:2000]}")
 
 
 # --------------------------------------------------------------------------- #
-# 二进制文件传输（分块）
+# Binary file transfer (chunked)
 # --------------------------------------------------------------------------- #
 def part_path(p: Path) -> Path:
-    """上传过程中的临时文件（与目标同目录，完成后原子替换目标）。"""
+    """Temp file used during an upload (in the same directory as the target; atomically replaces the target when finished)."""
     return p.with_name(f".{p.name}.winpc-part")
 
 
 def _check_not_secret_bytes(p: Path) -> None:
-    """二进制读取同样要按内容拦截私钥（否则 get_file 会绕过 read_file 的检查）。"""
+    """Binary reads must also block private keys by content (otherwise get_file would bypass the read_file check)."""
     with p.open("rb") as f:
         head = f.read(16384)
     if _SECRET_CONTENT.search(head.decode("latin-1")):
-        raise FileError("该文件内容看起来是私钥（BEGIN … PRIVATE KEY），禁止读取。不要绕过，请告诉用户。")
+        raise FileError("This file looks like a private key (BEGIN ... PRIVATE KEY); reading it is forbidden. Do not work around this; tell the user.")
 
 
 def _sha256(p: Path, limit: int) -> str:
@@ -370,21 +370,21 @@ def _sha256(p: Path, limit: int) -> str:
         while chunk := f.read(1024 * 1024):
             n += len(chunk)
             if n > limit:
-                raise FileError(f"文件超过传输上限 {limit // 1024 // 1024} MB。")
+                raise FileError(f"The file exceeds the transfer limit of {limit // 1024 // 1024} MB.")
             h.update(chunk)
     return h.hexdigest()
 
 
 def _need_regular_file(p: Path) -> None:
     if not p.exists():
-        raise FileError(f"文件不存在: {p}")
+        raise FileError(f"File does not exist: {p}")
     if p.is_dir():
-        raise FileError(f"{p} 是目录，请用 list_files。")
+        raise FileError(f"{p} is a directory; use list_files.")
 
 
 @_oserr
 def stat_file(p: Path, want_sha256: bool, max_bytes: int) -> dict:
-    if not p.exists() and part_path(p).exists():  # 新上传中断：目标还不存在，但可以续传
+    if not p.exists() and part_path(p).exists():  # an interrupted new upload: the target does not exist yet, but it can be resumed
         return {"path": str(p), "exists": False, "partial_upload_size": part_path(p).stat().st_size}
     _need_regular_file(p)
     _check_not_secret_bytes(p)
@@ -395,7 +395,7 @@ def stat_file(p: Path, want_sha256: bool, max_bytes: int) -> dict:
         info["sha256"] = _sha256(p, max_bytes)
     part = part_path(p)
     if part.exists():
-        info["partial_upload_size"] = part.stat().st_size  # 未完成的上传，可从这个偏移续传
+        info["partial_upload_size"] = part.stat().st_size  # unfinished upload; can be resumed from this offset
     return info
 
 
@@ -403,15 +403,15 @@ def stat_file(p: Path, want_sha256: bool, max_bytes: int) -> dict:
 def read_chunk(p: Path, offset: int, length: int, max_bytes: int) -> tuple[dict, bytes]:
     _need_regular_file(p)
     if offset < 0:
-        raise FileError("offset 不能为负数")
+        raise FileError("offset must not be negative")
     if not 1 <= length <= MAX_CHUNK_BYTES:
-        raise FileError(f"length 必须在 1..{MAX_CHUNK_BYTES}")
+        raise FileError(f"length must be in 1..{MAX_CHUNK_BYTES}")
     _check_not_secret_bytes(p)
     size = p.stat().st_size
     if size > max_bytes:
-        raise FileError(f"文件 {size} 字节，超过传输上限 {max_bytes // 1024 // 1024} MB（config.json 的 transfer_max_bytes）。")
+        raise FileError(f"The file is {size} bytes, over the transfer limit of {max_bytes // 1024 // 1024} MB (transfer_max_bytes in config.json).")
     if offset > size:
-        raise FileError(f"offset={offset} 超出文件大小 {size}")
+        raise FileError(f"offset={offset} is beyond the file size {size}")
     with p.open("rb") as f:
         f.seek(offset)
         data = f.read(length)
@@ -423,34 +423,34 @@ def read_chunk(p: Path, offset: int, length: int, max_bytes: int) -> tuple[dict,
 def write_chunk(p: Path, data: bytes, offset: int, final: bool, overwrite: bool, create_dirs: bool,
                 expected_size: int | None, expected_sha256: str | None, backup_dir: Path,
                 max_bytes: int) -> dict:
-    """分块上传：先写同目录的 .<name>.winpc-part，final 时校验后原子替换目标。
+    """Chunked upload: write .<name>.winpc-part in the target directory first; on final, verify and atomically replace the target.
 
-    offset=0 开始（或重新开始）一次上传；之后每块的 offset 必须等于临时文件当前大小（可用 stat_file 查询以续传）。
+    offset=0 starts (or restarts) an upload; after that each chunk's offset must equal the current size of the temp file (query it with stat_file to resume).
     """
     if offset < 0:
-        raise FileError("offset 不能为负数")
+        raise FileError("offset must not be negative")
     if len(data) > MAX_CHUNK_BYTES:
-        raise FileError(f"单块不能超过 {MAX_CHUNK_BYTES} 字节，请分块。")
+        raise FileError(f"A single chunk must not exceed {MAX_CHUNK_BYTES} bytes; split it into chunks.")
     if offset + len(data) > max_bytes:
-        raise FileError(f"超过传输上限 {max_bytes // 1024 // 1024} MB（config.json 的 transfer_max_bytes）。")
+        raise FileError(f"Over the transfer limit of {max_bytes // 1024 // 1024} MB (transfer_max_bytes in config.json).")
     if p.is_dir():
-        raise FileError(f"{p} 是目录。上传时 path 必须是目标文件的完整路径。")
+        raise FileError(f"{p} is a directory. When uploading, path must be the full path of the target file.")
     if p.exists() and not overwrite:
-        raise FileError("目标文件已存在。覆盖请设置 overwrite=true（原文件会先备份）。")
+        raise FileError("The target file already exists. Set overwrite=true to replace it (the original is backed up first).")
     if not p.parent.is_dir():
         if not create_dirs:
-            raise FileError(f"目录不存在: {p.parent}（需要的话设置 create_dirs=true）")
+            raise FileError(f"Directory does not exist: {p.parent} (set create_dirs=true if needed)")
         p.parent.mkdir(parents=True)
     part = part_path(p)
     if part.is_symlink():
-        raise FileError("临时文件是符号链接，已拒绝。")
+        raise FileError("The temp file is a symlink; refused.")
     if offset == 0:
         mode = "wb"
     else:
         have = part.stat().st_size if part.exists() else None
         if have != offset:
-            raise FileError(f"offset={offset} 与已接收的大小 {have if have is not None else '（无临时文件）'} 不一致；"
-                            f"从 offset={have or 0} 继续，或用 offset=0 重新开始。")
+            raise FileError(f"offset={offset} does not match the received size {have if have is not None else '(no temp file)'}; "
+                            f"continue from offset={have or 0}, or restart with offset=0.")
         mode = "ab"
     with part.open(mode) as f:
         f.write(data)
@@ -466,10 +466,10 @@ def write_chunk(p: Path, data: bytes, offset: int, final: bool, overwrite: bool,
         raise FileError(msg)
 
     if expected_size is not None and received != expected_size:
-        discard(f"大小不一致：收到 {received} 字节，期望 {expected_size}。已丢弃临时文件。")
+        discard(f"Size mismatch: received {received} bytes, expected {expected_size}. The temp file was discarded.")
     digest = _sha256(part, max_bytes)
     if expected_sha256 and digest != expected_sha256.lower():
-        discard(f"sha256 不一致：收到 {digest}，期望 {expected_sha256.lower()}。已丢弃临时文件。")
+        discard(f"sha256 mismatch: received {digest}, expected {expected_sha256.lower()}. The temp file was discarded.")
     note = None
     if p.exists():
         note = str(_backup(p, backup_dir))

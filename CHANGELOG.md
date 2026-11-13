@@ -1,59 +1,66 @@
-# 变更记录
+# Changelog
 
-本项目遵循语义化版本（0.x 阶段，接口可能调整）。
+This project follows semantic versioning (0.x: interfaces may still change).
 
-### 变更：0.3.6（修复：授权框超时会让 Agent 进程崩溃）
+### 0.4.0 (everything is now in English)
 
-- **授权框改为在独立子进程里运行。** 0.3.2 起的授权框在 Agent 的工作线程里使用 tkinter；Tk 要求对象在创建它的线程里销毁，授权框关闭后被别的线程的垃圾回收销毁时，Tcl 会报 `Tcl_AsyncDelete: async handler deleted by the wrong thread` 并**直接终止整个 Agent 进程**。实机上，一个授权框超时（60 秒没人点）后 Agent 就这样崩溃了（控制台先出现一串 `invalid command name "…tick"`，随后进程消失）。现在授权框是 `python backends.py --confirm-dialog` 子进程，Agent 只读它的结果；子进程崩溃、卡死、无法启动、tkinter 不可用，都只会回退到系统消息框或按拒绝处理，**不会再影响 Agent**。
-- 子进程读参数时**显式按 `utf-8-sig` 解码字节**：实机上同步脚本里的子进程自检发现，PowerShell 5.1 往管道写字符串会带 UTF-8 BOM（`json` 解析失败），而 `sys.stdin` 默认按系统代码页（中文 Windows 为 GBK）解码，授权框里的中文会乱码。
-- 新增测试：用假的子进程覆盖“选择 / 拒绝 / 乱码输出 / 崩溃 / abort / 卡死超时 / 无法启动”，并用 AST 保证 `tkinter` 只出现在子进程入口函数里。
+- **All user-visible text is English.** Tool results, error messages, the approval dialog (title, message, **Allow** / **Deny** buttons, countdown), tool descriptions, the server instructions, console output, the PowerShell scripts, the `winpc_cp.py` and live-test output, and the Claude Skill text were previously in Chinese; they are now English. The Chinese README (`README.zh-CN.md`) was removed.
+- **Message formats changed** (relevant if you parse them): the screenshot text now reads `Foreground window: <process> '<title>'.`; `list_windows` lines read `handle=... | <process> | '<title>' | screen (l,t) WxH | screenshot coords ≈(x,y) WxH`; `list_files` rows are marked `[dir]` / `[file]`; `read_file` headers are `File <path> | encoding ... | newlines ... | ...`. `bin/live_test.py` was updated accordingly.
+- Behavior is otherwise unchanged: same tools, same parameters, same security model. `config.json` needs no changes.
+- **Upgrading from 0.3.x:** overwrite `windows-agent/`, restart the Agent, and run `claude plugin marketplace update winpc-remote && claude plugin update winpc@winpc-remote` on Linux. Confirm with `agent_version` from `get_status`.
 
-### 变更：0.3.5
+### 0.3.6 (fix: an approval-dialog timeout could crash the Agent process)
 
-- **`type_text` / `press_key` 新增 `expect_handle` 参数**：`expect_app` 只能按进程名校验，而 Agent 窗口、隧道窗口、你自己的终端都是 `windowsterminal.exe`，分不开。`expect_handle`（`list_windows` 返回的窗口句柄）按**具体窗口**校验。两者可以同时给。
-- `winpc_cp.py`：网络中断（`RemoteDisconnected` / `IncompleteRead`，常见于隧道还在、Windows 上的 Agent 已退出或正在重启）现在给出清晰的错误和重试提示，而不是 Python traceback。
-- 文档：说明“在开始菜单等会自动收起的浮层上点击授权框，浮层会被收起”（Windows 对任何点在它外面的点击都会收起，与窗口是否被激活无关）——Agent 会因窗口变了而拒绝发送并提示重试，应用已授权所以重试不会再弹框。
+- **The approval dialog now runs in a separate subprocess.** Since 0.3.2 the dialog used tkinter in an Agent worker thread; Tk requires an object to be destroyed in the thread that created it, and when the closed dialog was destroyed by garbage collection in another thread, Tcl reported `Tcl_AsyncDelete: async handler deleted by the wrong thread` and **terminated the whole Agent process**. On a real machine the Agent crashed exactly this way after a dialog timed out (60 s without a click; the console first showed a series of `invalid command name "...tick"`, then the process vanished). The dialog is now a `python backends.py --confirm-dialog` subprocess and the Agent only reads its result; a subprocess that crashes, hangs, cannot be started, or has no tkinter just falls back to a system message box or counts as a denial, and **no longer affects the Agent**.
+- The subprocess **explicitly decodes its input bytes as `utf-8-sig`**: the subprocess self-test in the sync script on a real machine found that PowerShell 5.1 prepends a UTF-8 BOM when writing a string to a pipe (`json` parsing failed), and that `sys.stdin` decodes with the system code page by default (GBK on Chinese Windows), which garbles non-ASCII text in the dialog.
+- New tests: a fake subprocess covers "choice / deny / garbled output / crash / abort / hang timeout / cannot start", and an AST check ensures `tkinter` only appears in the subprocess entry function.
 
-### 变更：0.3.4
+### 0.3.5
 
-- **`type_text` / `press_key` 新增 `expect_app` 参数**：声明要操作的应用（进程名，不区分大小写，`.exe` 可省略），前台窗口不是它就**拒绝发送，且先于任何授权弹框检查**。实测中，用户在两次调用之间切到别的窗口（点了别处、在 VS Code 里回答模型的提问），按键因此落进了 VS Code——同类事故发生三次（清空了一段未发送的草稿、两次把命令敲进聊天框）。Skill 现在要求每次发键都带 `expect_app`；不带时行为不变（向后兼容）。
+- **`type_text` / `press_key` gained an `expect_handle` parameter**: `expect_app` can only check the process name, but the Agent window, the tunnel window and your own terminal are all `windowsterminal.exe` and cannot be told apart. `expect_handle` (the window handle returned by `list_windows`) checks the **specific window**. Both can be given together.
+- `winpc_cp.py`: a network interruption (`RemoteDisconnected` / `IncompleteRead`, typical when the tunnel is still up but the Agent on Windows has exited or is restarting) now gives a clear error and a retry hint instead of a Python traceback.
+- Docs: explained that "clicking the approval dialog over a popup that closes itself, such as the Start menu, closes that popup" (Windows closes it on any click outside it, whether or not a window is activated); the Agent refuses to send because the window changed and tells you to retry, and since the application is already approved the retry shows no dialog.
 
-### 变更：0.3.3
+### 0.3.4
 
-- **修复间歇性 `ECONNRESET`**：uvicorn 默认只保持空闲连接 5 秒，模型两次调用之间的思考常常更久，客户端复用已被服务器关闭的连接时，第一次调用就会 `ECONNRESET`（实机上几乎每次长时间思考后都会出现）。Agent 现在保持 600 秒（`KEEPALIVE_S`）。新增复现测试：对照组证明 uvicorn 默认配置会断连，修复组通过。
-- **`winpc_cp.py` 退出时关闭 MCP 会话**（HTTP `DELETE`）。此前每次运行都在 Agent 里留下一个永不释放的会话（控制台刷满 `Created new transport with session ID`）。出错路径同样会关闭。
-- **`bin/live_test.py` 增加前置检查**：新版记事本会恢复上次的标签页，而该脚本会向前台记事本输入并以“不保存”关闭它——如果你已有记事本窗口，会丢掉未保存的内容。现在检测到记事本窗口就在输入任何东西之前中止。
+- **`type_text` / `press_key` gained an `expect_app` parameter**: declares the app to operate (process name, case-insensitive, `.exe` optional); when the foreground window is not it, the call is **refused and nothing is sent, before any approval dialog is checked**. In testing the user switched to another window between two calls (clicked elsewhere, answered the model's question in VS Code), so keys landed in VS Code; this happened three times (it cleared an unsent draft and twice typed commands into the chat box). The Skill now requires `expect_app` on every key-sending call; without it the behavior is unchanged (backward compatible).
 
-### 变更：0.3.2
+### 0.3.3
 
-- **授权确认框不再被开始菜单/搜索框遮住，也不再抢焦点。** 原来的系统消息框显示在屏幕正中，会被同样居中的开始菜单盖住（用户点不到“是”），而且弹出时会关掉开始菜单。现在改为屏幕**顶部居中**的置顶浮窗，带倒计时，**点击它不会激活、不会改变前台窗口**；tkinter 不可用或出任何问题时自动回退到系统消息框。
-- **新增 `type_text(method="paste")`**：经剪贴板一次 `Ctrl+V` 粘贴，不受目标程序按键处理卡顿的影响。实机发现新版记事本在回车附近会卡顿，期间堆积的按键被合并成同一个字符（`OK abc`→`OOOK ccc`），逐字符发送也无法完全避免。粘贴会备份并恢复文本剪贴板；原剪贴板有非文本内容（图片、文件）时会在返回里提示已被替换。
-- **回车后额外等待**（`type_newline_delay_ms`，默认 150ms）。实测这只能略微缓解，不能根治：新版记事本里 `method="keys"` 仍会丢字，所以长文本/多行文本请用 `method="paste"`。
-- 修复：`get_file` 之外，剪贴板读取改为按 `GlobalSize` 有界读取并显式按 UTF-16 解码。
-- 新增 14 项回归测试（含用模拟 Win32 剪贴板 API 验证“无论粘贴成败都恢复剪贴板”）。
+- **Fixed the intermittent `ECONNRESET`**: uvicorn keeps idle connections for only 5 seconds by default, the model's thinking between two calls is often longer, and when the client reused a connection the server had already closed, the first call failed with `ECONNRESET` (it appeared after almost every long think on a real machine). The Agent now keeps connections for 600 seconds (`KEEPALIVE_S`). A reproduction test was added: the control group proves the uvicorn default drops the connection, the fixed group passes.
+- **`winpc_cp.py` closes its MCP session on exit** (HTTP `DELETE`). Before, every run left a session in the Agent that was never released (the console filled with `Created new transport with session ID`). The error path closes it as well.
+- **`bin/live_test.py` gained a pre-check**: the new Notepad restores the tabs of the last session, while that script types into the foreground Notepad and closes it with "Don't save"; if you already had a Notepad window, unsaved content would be lost. It now aborts before typing anything when it detects a Notepad window.
 
-### 变更：0.3.1（修复实机测试发现的两个缺陷）
+### 0.3.2
 
-- **`type_text` 在新版记事本里丢字/错字**：实测一次发送较长字符串时，整行会变成同一个字符重复（`type_text` → `tttttttttt`）。原因是一次 `SendInput` 塞进最多 100 个按键事件（约 50 个字符），应用来不及按序处理。现在逐字符发送并留间隔（`type_chunk_chars` / `type_delay_ms` 可调）；emoji 的两个 UTF-16 码元始终在同一次发送里。
-- **确认框抢走焦点会导致“批准的是 A，按键却发给 B”**：实测批准 `searchhost.exe` 时，弹框关掉了开始菜单，输入落进了没有被授权的 VS Code。现在授权通过后（以及已授权应用在真正发送前）会**重新核对目标窗口**，窗口变了就中止、不发送任何输入，并提示重新 `screenshot`；应用已授权，重试不会再次弹框。
-- 新增回归测试 `tests/test_typing_and_focus.py`（13 项），并用变异检查确认关掉复核后 4 项会失败。
-- **从 0.3.0 升级**：覆盖 `windows-agent/` 后重启 Agent；`config.json` 不用改（新增项有默认值）。
+- **The approval dialog is no longer hidden by the Start menu / search box and no longer steals focus.** The old system message box appeared in the middle of the screen, where the equally centered Start menu covered it (the user could not click "Yes"), and showing it closed the Start menu. It is now a topmost floating window at the **top center** of the screen with a countdown, and **clicking it does not activate it or change the foreground window**; when tkinter is unavailable or anything goes wrong it falls back to the system message box automatically.
+- **Added `type_text(method="paste")`**: one `Ctrl+V` paste through the clipboard, unaffected by the target app stalling on key handling. On a real machine the new Notepad stalled around Enter and the keys that piled up meanwhile were merged into one character (`OK abc` -> `OOOK ccc`), which even per-character sending could not fully avoid. The paste backs up and restores the text clipboard; when the original clipboard held non-text content (images, files), the result says it was replaced.
+- **Extra wait after Enter** (`type_newline_delay_ms`, default 150 ms). In testing this only mitigates the problem and does not cure it: `method="keys"` still drops characters in the new Notepad, so use `method="paste"` for long or multi-line text.
+- Fix: clipboard reads are now bounded by `GlobalSize` and explicitly decoded as UTF-16.
+- Added 14 regression tests (including one that uses a simulated Win32 clipboard API to verify that the clipboard is restored whether the paste succeeds or fails).
 
-### 变更：0.3.0（文件传输）
+### 0.3.1 (fixes two defects found in live testing)
 
-- 新增 MCP 工具 `stat_file` / `get_file` / `put_file`（二进制、分块、sha256 校验、原子替换、可续传）和 Linux 端脚本 `winpc_cp.py`（仅标准库，内容不经过模型上下文）。
-- 新增配置项 `transfer_max_bytes`；新增 `tests/test_transfer.py` 与 `bin/live_transfer_test.py`。
-- **从 0.2.x 升级**：覆盖 `windows-agent/` 后重启 Agent；`config.json` 不用改。Linux 端 `claude plugin update winpc@winpc-remote`。
+- **`type_text` dropped/garbled characters in the new Notepad**: when a longer string was sent at once, the whole line turned into one repeated character in testing (`type_text` -> `tttttttttt`). The cause was one `SendInput` carrying up to 100 key events (about 50 characters), which the app could not process in order. Characters are now sent one by one with a delay (`type_chunk_chars` / `type_delay_ms` are adjustable); the two UTF-16 code units of an emoji always go in the same send.
+- **The dialog stealing focus caused "A was approved, but the keys went to B"**: in testing, approving `searchhost.exe` made the dialog close the Start menu, and the input landed in an unauthorized VS Code. The target window is now **re-checked** after authorization (and before an already-approved application actually receives input); if the window changed, the call aborts, nothing is sent, and the result tells you to `screenshot` again; the application is already approved, so the retry shows no dialog again.
+- Added the regression tests `tests/test_typing_and_focus.py` (13 tests); a mutation check confirmed that 4 of them fail when the re-check is switched off.
+- **Upgrading from 0.3.0:** overwrite `windows-agent/` and restart the Agent; `config.json` needs no changes (new options have defaults).
 
-### 变更：0.2.1（安全加固）
+### 0.3.0 (file transfer)
 
-发布前的安全审计发现并修复：
+- Added the MCP tools `stat_file` / `get_file` / `put_file` (binary, chunked, sha256-verified, atomic replace, resumable) and the Linux-side script `winpc_cp.py` (standard library only; content never passes through the model context).
+- Added the config option `transfer_max_bytes`; added `tests/test_transfer.py` and `bin/live_transfer_test.py`.
+- **Upgrading from 0.2.x:** overwrite `windows-agent/` and restart the Agent; `config.json` needs no changes. On Linux run `claude plugin update winpc@winpc-remote`.
 
-- **按内容识别私钥**：此前私钥放在非常规路径、文件名不像 `id_rsa` 时，在 `all`/bypass 模式下可被读走。现在文件内容是私钥即拒绝读取和修改。
-- **`--config` 指向别处时令牌文件可读**：此前只拦截 Agent 目录，现在配置文件本身无论在哪都被拦截。
-- **扩充敏感文件名与路径**（`.env`、`.netrc`、`.npmrc`、`.git-credentials`、Brave/Opera/Vivaldi 数据、PowerShell 历史等）和**可执行扩展名**（`.jse .wsh .url .cpl .msc` 等）。
-- `start-agent.ps1` 收紧 `config.json` 权限；`start-tunnel.ps1` 加 `IdentitiesOnly=yes`。
-- `win-remote.ps1` 不再写死服务器信息，改读本地 `win-remote.config.json`，并改为 UTF-8 带 BOM。
-- 文档：`claude mcp add --header` 改用单引号，避免令牌被明文写入 `~/.claude.json`；新增受限隧道密钥方案。
+### 0.2.1 (security hardening)
 
-**从 0.2.0 升级**：覆盖 `windows-agent/` 下的文件即可，`config.json` 不用改；`win-remote.ps1` 现在需要先创建 `win-remote.config.json`（见 3.4）。
+Found and fixed by the pre-release security audit:
+
+- **Private keys are detected by content**: before, a private key in an unusual path and with a name that did not look like `id_rsa` could be read away in `all`/bypass mode. Reading and modifying a file whose content is a private key is now refused.
+- **The token file was readable when `--config` pointed elsewhere**: before, only the Agent directory was blocked; now the config file itself is blocked wherever it is.
+- **Extended the sensitive file names and paths** (`.env`, `.netrc`, `.npmrc`, `.git-credentials`, Brave/Opera/Vivaldi data, PowerShell history, etc.) and the **executable extensions** (`.jse .wsh .url .cpl .msc`, etc.).
+- `start-agent.ps1` tightens the permissions of `config.json`; `start-tunnel.ps1` adds `IdentitiesOnly=yes`.
+- `win-remote.ps1` no longer hard-codes server information and reads the local `win-remote.config.json` instead, and was changed to UTF-8 with BOM.
+- Docs: `claude mcp add --header` now uses single quotes so the token is not written to `~/.claude.json` in plain text; added a restricted tunnel-key setup.
+
+**Upgrading from 0.2.0:** just overwrite the files under `windows-agent/`; `config.json` needs no changes; `win-remote.ps1` now needs `win-remote.config.json` created first (see 3.4).

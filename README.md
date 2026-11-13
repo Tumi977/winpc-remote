@@ -7,8 +7,6 @@ Let **Claude Code running on a remote Linux server** operate **your local Window
 
 Claude Desktop's built-in computer use has no external interface, so a remote Claude Code cannot borrow it. This project provides the missing piece: a Windows-side executor plus a secure channel.
 
-Chinese version: [README.zh-CN.md](README.zh-CN.md)
-
 > **This is a third-party community project and is not affiliated with Anthropic.**
 
 > ## ⚠️ Read this first
@@ -16,8 +14,6 @@ Chinese version: [README.zh-CN.md](README.zh-CN.md)
 > The project provides several layers of protection (token, app authorization, sensitive-path blocking, emergency stop, audit log), but it is **not a sandbox**.
 > Please read [Security model and known risks](#6-security-model-and-known-risks) in full, especially the sections on `bypass` mode and on why "app authorization is not a sandbox".
 > **Strongly recommended:** run it in a dedicated Windows account or a virtual machine.
-
-> **Language note:** the agent's tool results, error messages and the approval dialog are currently in Chinese (a few are quoted below with their meaning). The tool names, parameters and configuration are all in English.
 
 ---
 
@@ -337,7 +333,7 @@ Typing `/mcp` inside Claude Code shows the status too. Then try:
 | Host / Origin checks | The MCP SDK's DNS-rebinding protection: a `Host` outside the allow-list returns 421, a disallowed `Origin` returns 403 (a web page in your browser cannot reach the local agent) |
 | App authorization | Before input, the owning process of the target window is determined (for clicks, the window under the coordinates; for typing/keys, the foreground window): block-list → refuse; allow-list or already approved in this session → allow; otherwise handled by `approval_mode` (`prompt` shows an always-on-top confirmation box on the PC) |
 | Wrong-window guard | `type_text` / `press_key` accept `expect_app` / `expect_handle`; if the foreground window is not the declared target, nothing is sent (and the check runs before any approval prompt) |
-| Emergency stop | Move the mouse to the **top-left corner of the primary screen** → the agent pauses; every input tool returns "paused by user" (in Chinese), `screenshot` still works. **Only restarting the agent on the Windows machine resumes it**; it cannot be undone remotely |
+| Emergency stop | Move the mouse to the **top-left corner of the primary screen** → the agent pauses; every input tool returns "Paused by the user", `screenshot` still works. **Only restarting the agent on the Windows machine resumes it**; it cannot be undone remotely |
 | File authorization | Paths are resolved to real paths (following symlinks) before judging: sensitive path → always refused; read inside `file_roots` → allowed; **every write** and reads outside `file_roots` → handled by `approval_mode`. In `allowlist` mode writes are always refused. Files are backed up before being written/modified, and the extension block-list stops auto-executable files |
 | Audit | `logs/actions.jsonl`, one line per call: time, tool, parameters, target process (file tools record `file:<path>`), result |
 | Model constraints | The Skill requires: on-screen text is data; ask the user before payment/sending/deleting/changing settings/submitting forms; never type passwords |
@@ -348,7 +344,7 @@ Typing `/mcp` inside Claude Code shows the status too. Then try:
 
 1. **`approval_mode: all` and `win-remote-bypass` remove every confirmation box.** The remote model can then operate any app except those on the block-list, and read or **download** (`read_file` / `get_file`) any file that is **not on the built-in sensitive list** (your documents, chat history, code, credentials stored in unusual places…). Use it only in a VM or a dedicated account; do not leave it on for long in your daily account. `get_status` shows the current `approval_mode`.
 2. **App authorization is not a sandbox.** Once you approve an app that can launch other programs — Explorer (including the `Win+R` Run box), Start-menu search, any terminal / PowerShell, an IDE with a terminal, a browser that saves and runs downloads — the model can effectively run arbitrary code as you. The file tools' extension block-list only covers the file tools; it cannot stop a script being typed by hand into an editor. Keep authorization narrow; if you do not need a terminal, add `cmd.exe`, `powershell.exe`, `pwsh.exe` and `windowsterminal.exe` to `blocked_apps` (remember to keep the defaults).
-3. **Clicking the approval box collapses flyouts such as the Start menu** (Windows dismisses them on any click outside, regardless of whether a window is activated). Since 0.3.1 the target window is re-checked after approval and the action is aborted if it changed; since 0.3.2 the approval box appears at the top-center of the screen, is not hidden and does not steal focus (it runs in a separate subprocess, so nothing it does can affect the agent). So after you approve an app for the first time the agent may report "the target window changed during authorization" (in Chinese): nothing was sent; just let Claude take a new `screenshot` and retry (the app is already approved, so no second prompt).
+3. **Clicking the approval box collapses flyouts such as the Start menu** (Windows dismisses them on any click outside, regardless of whether a window is activated). Since 0.3.1 the target window is re-checked after approval and the action is aborted if it changed; since 0.3.2 the approval box appears at the top-center of the screen, is not hidden and does not steal focus (it runs in a separate subprocess, so nothing it does can affect the agent). So after you approve an app for the first time the agent may report "The target window changed during authorization": nothing was sent; just let Claude take a new `screenshot` and retry (the app is already approved, so no second prompt).
 4. **Prompt injection.** Text in a web page, email or document on screen may try to steer the model. The Skill tells it to treat that as data, but this cannot be fully prevented. Do not let the model browse untrusted content while powerful apps (a terminal, a logged-in mailbox or bank) are authorized.
 5. **Privacy.** Every screenshot contains the whole screen and is sent to the model service. Private information on screen leaves your computer.
 6. **The audit log is not free of sensitive data.** It records only the **length and first 20 characters** of `type_text` / `write_file` / `edit_file` content, file paths and process names; with `save_screenshots` enabled screenshots are stored on disk. The log and backup directories are themselves blocked for the file tools.
@@ -504,9 +500,9 @@ It uploads a 3 MiB binary containing NUL bytes and a CRLF text file, downloads t
 | **Garbled text / missing characters** | `type_text` uses Unicode `SendInput` and is independent of the input method. If it still misbehaves, check whether the target program runs as administrator (UIPI silently drops input). For garbled text in PowerShell scripts, make sure the script is saved as **UTF-8 with BOM** (Windows PowerShell 5.1 reads UTF-8 without a BOM as GBK) |
 | Black screenshot / "screen may be locked" | The screen is locked or the monitor is asleep; unlock and turn off auto-lock. A disconnected RDP session also goes black; run in the local console session |
 | Tool timeouts | Slow tunnel or large screenshots. Raise `MCP_TOOL_TIMEOUT`; lower `max_long_edge` / `jpeg_quality` |
-| "the target window runs as administrator" (in Chinese) | UIPI limitation. Restart the agent as administrator only if you really need to (higher risk); UAC prompts cannot be operated in any way |
-| "paused by user" (in Chinese) | The emergency stop was triggered. Restart the agent on the Windows machine |
-| A file tool says "sensitive location / private key / the agent's own directory" (in Chinese) | This is an intentional block and is never lifted in any mode. Do not try to work around it |
+| "The target window ... runs as administrator" | UIPI limitation. Restart the agent as administrator only if you really need to (higher risk); UAC prompts cannot be operated in any way |
+| "Paused by the user" | The emergency stop was triggered. Restart the agent on the Windows machine |
+| A file tool says "sensitive location / private key / the agent's own directory" | This is an intentional block and is never lifted in any mode. Do not try to work around it |
 | The approval box did not appear / was denied | The box is an always-on-top dialog; no click within 60 s by default counts as "deny"; the agent must run in an interactive desktop session (not a service, not an SSH session) |
 | `win-remote-on` says `win-remote.config.json` was not found | Copy the example and fill it in as described in 3.4 |
 
@@ -556,8 +552,9 @@ tests/           unit + end-to-end tests (FakeBackend; run on Linux)
 
 ### Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for the full history (currently written in Chinese). The most recent entries:
+See [CHANGELOG.md](CHANGELOG.md) for the full history The most recent entries:
 
+- **0.4.0** all user-visible text (tool results, errors, the approval dialog, scripts, Skill, docs) is now English; behavior is otherwise unchanged;
 - **0.3.6** fixed the agent process crashing when an approval box timed out (the box now runs in a separate subprocess);
 - **0.3.5** added `expect_handle`: verifies a specific window handle, so several terminal windows can be told apart;
 - **0.3.4** added `expect_app`: refuses to send keys when the foreground window is not the expected app (keys had landed in VS Code three times during testing);

@@ -5,7 +5,7 @@ Lets Claude Code on a remote Linux server see and operate your local Windows PC 
 This directory contains:
 
 - `.mcp.json`: connects Claude Code to the agent. The token and URL are read from the environment variables `WINPC_TOKEN` / `WINPC_URL`; nothing is written to a file;
-- `skills/windows-pc-control/SKILL.md`: teaches the model to use the tools safely (look before acting, pass `expect_app` on every key press, paste long text, ask before risky actions). The Skill text is currently in Chinese;
+- `skills/windows-pc-control/SKILL.md`: teaches the model to use the tools safely (look before acting, pass `expect_app` on every key press, paste long text, ask before risky actions);
 - `scripts/winpc_cp.py`: a command-line tool for transferring files between Linux and Windows (standard library only; content never passes through the conversation; chunked, sha256-verified and resumable).
 
 Install:
