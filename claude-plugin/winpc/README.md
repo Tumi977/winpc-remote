@@ -1,18 +1,18 @@
-# winpc 插件
+# winpc plugin
 
-让远程 Linux 上的 Claude Code 通过 `winpc-agent`（需另行在 Windows 上运行）查看并操作你本地的 Windows 电脑：截图、点击、输入、按键、读写文件、传输二进制文件。
+Lets Claude Code on a remote Linux server see and operate your local Windows PC through `winpc-agent` (which you run on Windows separately): screenshots, clicks, typing, key presses, file reads/writes and binary file transfer.
 
-本目录包含：
+This directory contains:
 
-- `.mcp.json`：把 Claude Code 连到 Agent。令牌和地址从环境变量 `WINPC_TOKEN` / `WINPC_URL` 读取，不写入任何文件；
-- `skills/windows-pc-control/SKILL.md`：教模型安全地使用这些工具（先看后动、每次发键带 `expect_app`、长文本用粘贴、危险动作先问用户）；
-- `scripts/winpc_cp.py`：Linux 与 Windows 之间传输文件的命令行工具（仅标准库，内容不经过对话，分块 + sha256 校验 + 断点续传）。
+- `.mcp.json`: connects Claude Code to the agent. The token and URL are read from the environment variables `WINPC_TOKEN` / `WINPC_URL`; nothing is written to a file;
+- `skills/windows-pc-control/SKILL.md`: teaches the model to use the tools safely (look before acting, pass `expect_app` on every key press, paste long text, ask before risky actions). The Skill text is currently in Chinese;
+- `scripts/winpc_cp.py`: a command-line tool for transferring files between Linux and Windows (standard library only; content never passes through the conversation; chunked, sha256-verified and resumable).
 
-安装：
+Install:
 
 ```bash
 claude plugin marketplace add Tumi977/winpc-remote
 claude plugin install winpc@winpc-remote
 ```
 
-**安装、Windows 端配置、SSH 反向隧道、安全模型与已知风险**见仓库根目录的 [README](../../README.md)。使用前请务必先读其中的“安全模型与已知风险”：这会让模型以你的身份操作你的桌面。
+For installation, Windows setup, the SSH reverse tunnel, the security model and known risks, see the repository [README](../../README.md). Please read its "Security model and known risks" chapter before use: this lets a model operate your desktop as you.
