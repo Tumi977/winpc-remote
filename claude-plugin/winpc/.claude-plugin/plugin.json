@@ -1,6 +1,6 @@
 {
   "name": "winpc",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "让远程 Linux 上的 Claude Code 通过 winpc-agent 查看并操作本地 Windows 电脑（截图、点击、输入、按键）并读写本地文件",
   "author": { "name": "WinPC Remote contributors" },
   "license": "MIT",

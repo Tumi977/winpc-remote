@@ -34,7 +34,7 @@ import fileops
 from backends import Backend, BackendError, FailSafeTriggered, Monitor, WindowInfo
 from fileops import FileError
 
-__version__ = "0.3.5"
+__version__ = "0.3.6"
 
 PAUSED_MSG = ("已被用户暂停：用户触发了紧急停止（鼠标甩到屏幕左上角）。"
               "请立即停止所有操作并告诉用户；只能在 Windows 本机重启 Agent 才能恢复。")

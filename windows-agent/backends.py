@@ -266,6 +266,8 @@ _MOUSEEVENTF_WHEEL, _MOUSEEVENTF_HWHEEL = 0x0800, 0x1000
 _WHEEL_DELTA = 120
 _VK_RETURN, _VK_TAB, _VK_MENU = 0x0D, 0x09, 0x12
 _CF_TEXT, _CF_OEMTEXT, _CF_UNICODETEXT, _CF_LOCALE = 1, 7, 13, 16
+_CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
+_DIALOG_YES, _DIALOG_NO = "WINPC_CONFIRM:YES", "WINPC_CONFIRM:NO"
 
 
 class WindowsBackend(Backend):
@@ -678,75 +680,35 @@ class WindowsBackend(Backend):
             time.sleep(0.03)
 
     # -- 弹窗 --
-    def _no_activate(self, hwnd: int) -> None:
-        """让窗口置顶、且点击它不会抢走前台窗口（否则开始菜单/搜索框等弹出层会被关掉）。"""
-        GWL_EXSTYLE = -20
-        WS_EX_TOPMOST, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE = 0x8, 0x80, 0x08000000
-        u = self.user32
-        style = u.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
-        u.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)
-        # HWND_TOPMOST=-1；SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE|SWP_FRAMECHANGED
-        u.SetWindowPos(hwnd, ctypes.c_void_p(-1), 0, 0, 0, 0, 0x1 | 0x2 | 0x10 | 0x20)
+    dialog_slack_s = 15.0       # 子进程比倒计时多给的宽限（启动慢、系统繁忙时）
 
     def _confirm_tk(self, title: str, message: str, timeout_s: float) -> bool | None:
-        """屏幕顶部居中的置顶确认框：不激活（不抢焦点），不会被居中的开始菜单/搜索框盖住。
-        tkinter 不可用时返回 None，由调用方回退到系统消息框。"""
+        """在**独立的子进程**里显示授权框（屏幕顶部居中、置顶、不抢焦点），Agent 只读它的结果。
+
+        不能在 Agent 的工作线程里跑 tkinter：Tk 对象必须在创建它的线程里销毁，授权框关闭后被别的线程的
+        垃圾回收销毁时，Tcl 会 `Tcl_AsyncDelete: async handler deleted by the wrong thread` 直接 abort 整个进程
+        （实机上授权框超时后 Agent 就是这样崩溃的）。进程隔离后，子进程出任何问题都只会让本函数返回 None
+        （由调用方回退到系统消息框），不会影响 Agent。返回 None = 子进程不可用；True/False = 用户的选择。
+        """
+        import json
+        import subprocess
+        cmd = self._dialog_command()
+        payload = json.dumps({"title": title, "message": message, "timeout_s": timeout_s}, ensure_ascii=False)
         try:
-            import tkinter as tk
-        except Exception:
+            r = subprocess.run(cmd, input=payload, capture_output=True, text=True, encoding="utf-8",
+                               timeout=timeout_s + self.dialog_slack_s, creationflags=_CREATE_NO_WINDOW)
+        except subprocess.TimeoutExpired:
+            return False                      # 子进程被 run() 杀掉；超时视为拒绝
+        except Exception:                     # noqa: BLE001  无法启动子进程
             return None
-        root = tk.Tk()
-        result = {"yes": False}
-        try:
-            root.withdraw()
-            root.overrideredirect(True)                 # 无标题栏的弹出窗口：显示时不会被激活
-            root.attributes("-topmost", True)
-            font = "Microsoft YaHei UI"
-            frame = tk.Frame(root, bg="#202020", highlightbackground="#e0a800", highlightthickness=3)
-            frame.pack(fill="both", expand=True)
-            tk.Label(frame, text="⚠ " + title, bg="#e0a800", fg="black", anchor="w", padx=12, pady=4,
-                     font=(font, 11, "bold")).pack(fill="x")
-            tk.Label(frame, text=message, bg="#202020", fg="white", justify="left", wraplength=640,
-                     padx=16, pady=10, font=(font, 10)).pack()
-            left = tk.StringVar()
-            tk.Label(frame, textvariable=left, bg="#202020", fg="#aaaaaa", font=(font, 9)).pack()
-            btns = tk.Frame(frame, bg="#202020")
-            btns.pack(pady=10)
+        for line in reversed((r.stdout or "").splitlines()):
+            if line.strip() in (_DIALOG_YES, _DIALOG_NO):
+                return line.strip() == _DIALOG_YES
+        return None                           # 子进程崩溃/没有输出：回退
 
-            def done(v: bool) -> None:
-                result["yes"] = v
-                root.quit()
-            tk.Button(btns, text="允许", width=14, bg="#2e7d32", fg="white", activebackground="#388e3c",
-                      font=(font, 10, "bold"), command=lambda: done(True)).pack(side="left", padx=12)
-            tk.Button(btns, text="拒绝", width=14, bg="#c62828", fg="white", activebackground="#d32f2f",
-                      font=(font, 10, "bold"), command=lambda: done(False)).pack(side="left", padx=12)
-            deadline = time.time() + timeout_s
-
-            def tick() -> None:
-                remain = int(deadline - time.time() + 0.999)
-                if remain <= 0:
-                    done(False)
-                    return
-                left.set(f"{remain} 秒内未选择视为拒绝")
-                root.after(250, tick)
-            tick()
-            root.update_idletasks()
-            w, h = root.winfo_reqwidth(), root.winfo_reqheight()
-            root.geometry(f"{w}x{h}+{max(0, (root.winfo_screenwidth() - w) // 2)}+60")
-            root.deiconify()
-            root.update()
-            self._no_activate(root.winfo_id())
-            try:
-                self.user32.MessageBeep(0x20)
-            except Exception:
-                pass
-            root.mainloop()
-        finally:
-            try:
-                root.destroy()
-            except Exception:
-                pass
-        return result["yes"]
+    @staticmethod
+    def _dialog_command() -> list[str]:
+        return [sys.executable, os.path.abspath(__file__), "--confirm-dialog"]
 
     def confirm(self, title: str, message: str, timeout_s: float) -> bool:
         try:
@@ -780,3 +742,102 @@ class WindowsBackend(Backend):
             return bool(self.shell32.IsUserAnAdmin())
         except Exception:
             return False
+
+
+# --------------------------------------------------------------------------- #
+# 授权框（在独立子进程里运行：python backends.py --confirm-dialog，参数从 stdin 读 JSON）
+# 这里的 tkinter 全部在本进程的主线程里创建和销毁，不存在跨线程销毁的问题。
+# --------------------------------------------------------------------------- #
+def _make_noactivate(hwnd: int) -> None:
+    """让窗口置顶、且点击它不会抢走前台窗口。"""
+    u = ctypes.WinDLL("user32", use_last_error=True)
+    u.GetWindowLongPtrW.argtypes, u.GetWindowLongPtrW.restype = [wt.HWND, ctypes.c_int], ctypes.c_ssize_t
+    u.SetWindowLongPtrW.argtypes = [wt.HWND, ctypes.c_int, ctypes.c_ssize_t]
+    u.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+    u.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wt.UINT]
+    GWL_EXSTYLE = -20
+    style = u.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
+    u.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | 0x8 | 0x80 | 0x08000000)    # TOPMOST|TOOLWINDOW|NOACTIVATE
+    u.SetWindowPos(hwnd, ctypes.c_void_p(-1), 0, 0, 0, 0, 0x1 | 0x2 | 0x10 | 0x20)
+    try:
+        u.MessageBeep(0x20)
+    except Exception:       # noqa: BLE001
+        pass
+
+
+def run_confirm_dialog(title: str, message: str, timeout_s: float) -> bool:
+    import tkinter as tk
+    result = {"yes": False}
+    root = tk.Tk()
+    after_id = None
+    try:
+        root.withdraw()
+        root.overrideredirect(True)                 # 无标题栏的弹出窗口：显示时不会被激活
+        root.attributes("-topmost", True)
+        font = "Microsoft YaHei UI"
+        frame = tk.Frame(root, bg="#202020", highlightbackground="#e0a800", highlightthickness=3)
+        frame.pack(fill="both", expand=True)
+        tk.Label(frame, text="⚠ " + title, bg="#e0a800", fg="black", anchor="w", padx=12, pady=4,
+                 font=(font, 11, "bold")).pack(fill="x")
+        tk.Label(frame, text=message, bg="#202020", fg="white", justify="left", wraplength=640,
+                 padx=16, pady=10, font=(font, 10)).pack()
+        countdown = tk.Label(frame, text="", bg="#202020", fg="#aaaaaa", font=(font, 9))
+        countdown.pack()
+        btns = tk.Frame(frame, bg="#202020")
+        btns.pack(pady=10)
+
+        def done(v: bool) -> None:
+            result["yes"] = v
+            root.quit()
+        tk.Button(btns, text="允许", width=14, bg="#2e7d32", fg="white", activebackground="#388e3c",
+                  font=(font, 10, "bold"), command=lambda: done(True)).pack(side="left", padx=12)
+        tk.Button(btns, text="拒绝", width=14, bg="#c62828", fg="white", activebackground="#d32f2f",
+                  font=(font, 10, "bold"), command=lambda: done(False)).pack(side="left", padx=12)
+        deadline = time.time() + timeout_s
+
+        def tick() -> None:
+            nonlocal after_id
+            remain = int(deadline - time.time() + 0.999)
+            if remain <= 0:
+                done(False)
+                return
+            countdown.config(text=f"{remain} 秒内未选择视为拒绝")
+            after_id = root.after(250, tick)
+        tick()
+        root.update_idletasks()
+        w, h = root.winfo_reqwidth(), root.winfo_reqheight()
+        root.geometry(f"{w}x{h}+{max(0, (root.winfo_screenwidth() - w) // 2)}+60")   # 屏幕顶部居中
+        root.deiconify()
+        root.update()
+        _make_noactivate(root.winfo_id())
+        root.mainloop()
+    finally:
+        if after_id is not None:
+            try:
+                root.after_cancel(after_id)
+            except Exception:       # noqa: BLE001
+                pass
+        try:
+            root.destroy()
+        except Exception:           # noqa: BLE001
+            pass
+    return result["yes"]
+
+
+def _dialog_main() -> int:
+    import json
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:       # noqa: BLE001
+        pass
+    # 必须读字节并显式按 UTF-8 解码：sys.stdin 默认按系统代码页（中文 Windows 是 GBK）解码，授权框里的中文会乱码；
+    # 同时容忍 BOM（PowerShell 5.1 往管道写字符串会带 UTF-8 BOM）。
+    args = json.loads(sys.stdin.buffer.read().decode("utf-8-sig"))
+    yes = run_confirm_dialog(args["title"], args["message"], float(args["timeout_s"]))
+    print(_DIALOG_YES if yes else _DIALOG_NO, flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    if "--confirm-dialog" in sys.argv:
+        sys.exit(_dialog_main())

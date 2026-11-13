@@ -426,3 +426,100 @@ async def test_expect_handle_zero_is_still_a_real_constraint_and_none_is_not(tmp
     fb.foreground_process = "x.exe"
     assert (await agent.type_text("x", expect_handle=0, screenshot_after=False)).is_error     # 0 不是 None
     assert not (await agent.type_text("x", expect_handle=None, screenshot_after=False)).is_error
+
+
+# ---- 授权框子进程：实机上 Agent 因线程内 tkinter 的 Tcl_AsyncDelete 崩溃过，必须进程隔离 ----
+import ast
+import sys as _sys
+import textwrap as _tw
+
+
+def test_tkinter_is_never_imported_in_the_agent_process_code_paths():
+    """tkinter 只能出现在子进程入口 run_confirm_dialog 里；Agent 进程里任何地方 import tkinter 都可能重现崩溃。"""
+    tree = ast.parse(open(backends.__file__, encoding="utf-8").read())
+    owners = set()
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for n in ast.walk(fn):
+                if isinstance(n, (ast.Import, ast.ImportFrom)) and any(
+                        (a.name or "").split(".")[0] == "tkinter" for a in getattr(n, "names", [])) or (
+                        isinstance(n, ast.ImportFrom) and (n.module or "").split(".")[0] == "tkinter"):
+                    owners.add(fn.name)
+    top = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom)) and "tkinter" in ast.dump(n)]
+    assert not top, "tkinter 不能在模块顶层导入"
+    assert owners == {"run_confirm_dialog"}, owners
+
+
+def fake_dialog(monkeypatch, code: str, slack=0.5):
+    b = object.__new__(WindowsBackend)
+    b.dialog_slack_s = slack
+    f = _tw.dedent(code)
+    monkeypatch.setattr(WindowsBackend, "_dialog_command", staticmethod(lambda: [_sys.executable, "-c", f]))
+    return b
+
+
+def test_dialog_subprocess_yes_and_no_and_payload_roundtrip(monkeypatch):
+    yes = fake_dialog(monkeypatch, """
+        import json, sys
+        a = json.loads(sys.stdin.read())
+        assert a["title"] == "标题 ⚠" and a["message"] == "行1\\n行2" and a["timeout_s"] == 5
+        print("noise before"); print("WINPC_CONFIRM:YES")
+    """)
+    assert yes._confirm_tk("标题 ⚠", "行1\n行2", 5) is True
+    no = fake_dialog(monkeypatch, 'print("WINPC_CONFIRM:NO")')
+    assert no._confirm_tk("t", "m", 5) is False
+
+
+@pytest.mark.parametrize("code", ["import sys; sys.exit(3)",                        # 崩溃，无输出
+                                  'print("garbage")',                                # 乱码输出
+                                  "import os; os._exit(134)",                        # 类似 Tcl_AsyncDelete 的 abort
+                                  ""])                                               # 空
+def test_dialog_subprocess_failures_return_none_so_caller_falls_back(monkeypatch, code):
+    b = fake_dialog(monkeypatch, code or "pass")
+    assert b._confirm_tk("t", "m", 2) is None
+
+
+def test_dialog_subprocess_hang_is_killed_and_counts_as_deny(monkeypatch):
+    b = fake_dialog(monkeypatch, "import time; time.sleep(60)", slack=0.3)
+    import time as _t
+    t0 = _t.time()
+    assert b._confirm_tk("t", "m", 0.3) is False
+    assert _t.time() - t0 < 10
+
+
+def test_dialog_cannot_start_returns_none(monkeypatch):
+    b = object.__new__(WindowsBackend)
+    b.dialog_slack_s = 1
+    monkeypatch.setattr(WindowsBackend, "_dialog_command", staticmethod(lambda: ["/no/such/python"]))
+    assert b._confirm_tk("t", "m", 1) is None
+
+
+def test_confirm_never_crashes_the_agent_when_dialog_process_dies(monkeypatch):
+    b = fake_dialog(monkeypatch, "import os; os._exit(134)")
+    b._confirm_messagebox = lambda t, m, s: False        # 回退到系统消息框
+    assert b.confirm("t", "m", 2) is False
+
+
+import io as _io
+
+
+class _FakeStdin:
+    def __init__(self, data: bytes):
+        self.buffer = _io.BytesIO(data)
+
+    def read(self):                                 # 老写法 sys.stdin.read()：按系统代码页解码，故意造成乱码
+        return self.buffer.getvalue().decode("gbk", errors="replace")
+
+
+@pytest.mark.parametrize("bom", [b"", b"\xef\xbb\xbf"])
+def test_dialog_entry_decodes_utf8_stdin_with_or_without_bom(monkeypatch, capsys, bom):
+    """实机自检发现：PowerShell 管道带 BOM 会让 json 解析失败；且 sys.stdin 默认按 GBK 解码会让中文乱码。"""
+    import json
+    payload = json.dumps({"title": "WinPC Remote - 应用授权", "message": "请求操作应用：searchhost.exe\n动作：输入 3 个字符",
+                          "timeout_s": 5}, ensure_ascii=False).encode("utf-8")
+    seen = {}
+    monkeypatch.setattr(backends, "run_confirm_dialog", lambda t, m, s: seen.update(t=t, m=m, s=s) or True)
+    monkeypatch.setattr(backends.sys, "stdin", _FakeStdin(bom + payload))
+    assert backends._dialog_main() == 0
+    assert seen == {"t": "WinPC Remote - 应用授权", "m": "请求操作应用：searchhost.exe\n动作：输入 3 个字符", "s": 5.0}
+    assert "WINPC_CONFIRM:YES" in capsys.readouterr().out

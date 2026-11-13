@@ -2,6 +2,12 @@
 
 本项目遵循语义化版本（0.x 阶段，接口可能调整）。
 
+### 变更：0.3.6（修复：授权框超时会让 Agent 进程崩溃）
+
+- **授权框改为在独立子进程里运行。** 0.3.2 起的授权框在 Agent 的工作线程里使用 tkinter；Tk 要求对象在创建它的线程里销毁，授权框关闭后被别的线程的垃圾回收销毁时，Tcl 会报 `Tcl_AsyncDelete: async handler deleted by the wrong thread` 并**直接终止整个 Agent 进程**。实机上，一个授权框超时（60 秒没人点）后 Agent 就这样崩溃了（控制台先出现一串 `invalid command name "…tick"`，随后进程消失）。现在授权框是 `python backends.py --confirm-dialog` 子进程，Agent 只读它的结果；子进程崩溃、卡死、无法启动、tkinter 不可用，都只会回退到系统消息框或按拒绝处理，**不会再影响 Agent**。
+- 子进程读参数时**显式按 `utf-8-sig` 解码字节**：实机上同步脚本里的子进程自检发现，PowerShell 5.1 往管道写字符串会带 UTF-8 BOM（`json` 解析失败），而 `sys.stdin` 默认按系统代码页（中文 Windows 为 GBK）解码，授权框里的中文会乱码。
+- 新增测试：用假的子进程覆盖“选择 / 拒绝 / 乱码输出 / 崩溃 / abort / 卡死超时 / 无法启动”，并用 AST 保证 `tkinter` 只出现在子进程入口函数里。
+
 ### 变更：0.3.5
 
 - **`type_text` / `press_key` 新增 `expect_handle` 参数**：`expect_app` 只能按进程名校验，而 Agent 窗口、隧道窗口、你自己的终端都是 `windowsterminal.exe`，分不开。`expect_handle`（`list_windows` 返回的窗口句柄）按**具体窗口**校验。两者可以同时给。
