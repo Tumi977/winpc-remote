@@ -604,7 +604,7 @@ tests/           unit + end-to-end tests (FakeBackend; run on Linux)
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history The most recent entries:
 
-- **0.4.0** all user-visible text (tool results, errors, the approval dialog, scripts, Skill, docs) is now English; behavior is otherwise unchanged;
+- **0.4.0** wording and formats of tool results and messages revised; behavior unchanged;
 - **0.3.6** fixed the agent process crashing when an approval box timed out (the box now runs in a separate subprocess);
 - **0.3.5** added `expect_handle`: verifies a specific window handle, so several terminal windows can be told apart;
 - **0.3.4** added `expect_app`: refuses to send keys when the foreground window is not the expected app (keys had landed in VS Code three times during testing);
